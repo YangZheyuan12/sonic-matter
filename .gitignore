@@ -1,0 +1,33 @@
+# Dependencies and build output
+node_modules/
+dist/
+dist-ssr/
+server/generated/
+
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+*.local
+
+# Logs and temporary files
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Local QA artifacts
+web/homepage-*.png
+web/pitch-labels-check.png
+sound.txt
+studio.txt
+
+# Editors and OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.suo
+*.sw?

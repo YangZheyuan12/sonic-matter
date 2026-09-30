@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "instruments": {
+    "piano": { "url": "/soundfonts/piano-c4.wav", "rootPitch": 60 },
+    "strings": { "url": "/soundfonts/strings-c4.wav", "rootPitch": 60 },
+    "bass": { "url": "/soundfonts/bass-c2.wav", "rootPitch": 36 },
+    "pad": { "url": "/soundfonts/pad-c4.wav", "rootPitch": 60 },
+    "bell": { "url": "/soundfonts/bell-c5.wav", "rootPitch": 72 }
+  }
+}
