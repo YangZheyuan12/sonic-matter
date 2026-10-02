@@ -95,13 +95,25 @@ async function decodeClip(context: BaseAudioContext, track: Track) {
 
 function scheduleClip(context: BaseAudioContext, track: Track, buffer: AudioBuffer, destination: AudioNode, origin: number, offset: number) {
   const clipStart = trackStart(track)
-  const clipEnd = clipStart + buffer.duration
+  const sourceStart = Math.max(0, Math.min(buffer.duration, track.clipStart ?? 0))
+  const sourceEnd = Math.max(sourceStart, Math.min(buffer.duration, track.clipEnd ?? buffer.duration))
+  const clipEnd = clipStart + (sourceEnd - sourceStart)
   if (clipEnd <= offset) return []
   const source = context.createBufferSource()
   source.buffer = buffer
   source.connect(trackOutput(context, track, destination))
-  const sourceOffset = Math.max(0, offset - clipStart)
-  source.start(origin + Math.max(0, clipStart - offset), sourceOffset)
+  const sourceOffset = sourceStart + Math.max(0, offset - clipStart)
+  const remaining = Math.max(.01, sourceEnd - sourceOffset)
+  const envelope = context.createGain()
+  const fadeIn = Math.min(track.fadeIn ?? 0, remaining / 2)
+  const fadeOut = Math.min(track.fadeOut ?? 0, remaining / 2)
+  const start = origin + Math.max(0, clipStart - offset)
+  envelope.gain.setValueAtTime(fadeIn ? 0.0001 : 1, start)
+  if (fadeIn) envelope.gain.linearRampToValueAtTime(1, start + fadeIn)
+  if (fadeOut) { envelope.gain.setValueAtTime(1, start + remaining - fadeOut); envelope.gain.linearRampToValueAtTime(0.0001, start + remaining) }
+  source.disconnect()
+  source.connect(envelope).connect(trackOutput(context, track, destination))
+  source.start(start, sourceOffset, remaining)
   return [source]
 }
 

@@ -14,6 +14,10 @@ export type Track = {
   color: string
   notes?: Note[]
   clip?: string
+  clipStart?: number
+  clipEnd?: number
+  fadeIn?: number
+  fadeOut?: number
   gain?: number
   pan?: number
   muted?: boolean
@@ -69,6 +73,10 @@ export function normalizeProject(value: unknown): Project {
       color: text(track.color, '#7dd3fc'),
       notes,
       clip: typeof track.clip === 'string' ? track.clip : undefined,
+      clipStart: Math.max(0, finite(track.clipStart, 0)),
+      clipEnd: typeof track.clipEnd === 'number' ? Math.max(0, finite(track.clipEnd, 0)) : undefined,
+      fadeIn: Math.max(0, finite(track.fadeIn, 0)),
+      fadeOut: Math.max(0, finite(track.fadeOut, 0)),
       gain: Math.max(0, Math.min(1, finite(track.gain, .8))),
       pan: Math.max(-1, Math.min(1, finite(track.pan, 0))),
       muted: Boolean(track.muted),
