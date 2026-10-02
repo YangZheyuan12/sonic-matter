@@ -61,13 +61,17 @@ web/public/soundfonts/
 
 ```powershell
 cd web
-npx tsc -b
-npm run lint
-npm run build
+npm ci
+npm run verify
 
 cd ../server
-npm run typecheck
+npm ci
+npm run verify
 ```
+
+CI 会在每次 push 和 pull request 时使用 Node.js 20 执行相同的验证命令。
+
+如果只需要检查前端构建，可运行 `npm run verify --prefix web`；只需要检查后端，可运行 `npm run verify --prefix server`。
 
 ## 当前状态
 

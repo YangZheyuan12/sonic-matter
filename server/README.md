@@ -32,12 +32,12 @@ PORT=8787
 在两个终端分别运行：
 
 ```powershell
-cd "D:\myProjects\腾讯音乐黑客松\server"
+cd "D:\MyProjects\sonic-matter\server"
 npm run start
 ```
 
 ```powershell
-cd "D:\myProjects\腾讯音乐黑客松\web"
+cd "D:\MyProjects\sonic-matter\web"
 npm run dev
 ```
 
