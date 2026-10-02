@@ -271,6 +271,10 @@ function midiTrack(name: string, tempo: number, notes: Array<z.infer<typeof note
 }
 app.post('/api/export/midi', async (req, res) => { const parsed = projectSchema.safeParse(req.body?.project); if (!parsed.success) return res.status(400).json({ error: 'Project 数据不正确。' }); const project = parsed.data; const midiTracks = project.tracks.filter(track => track.kind === 'midi').map((track, index) => midiTrack(track.name, project.tempo, track.notes ?? [], index === 0)); if (!midiTracks.length) return res.status(400).json({ error: '当前工程没有 MIDI 轨道。' }); const header = [0x4d, 0x54, 0x68, 0x64, ...u32(6), ...u16(1), ...u16(midiTracks.length), ...u16(480)]; const data = Buffer.from([...header, ...midiTracks.flat()]); res.setHeader('Content-Type', 'audio/midi'); res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(project.title)}.mid"`); return res.send(data) })
 
-app.listen(port, () => { const config = resolveAgentConfig(); console.log(`Audio Agent server listening on http://localhost:${port} (agent=${Boolean(config.apiKey)}, model=${config.model}, protocol=${config.protocol})`) })
+export { app }
+
+if (!process.argv.includes('--test')) {
+  app.listen(port, () => { const config = resolveAgentConfig(); console.log(`Audio Agent server listening on http://localhost:${port} (agent=${Boolean(config.apiKey)}, model=${config.model}, protocol=${config.protocol})`) })
+}
 
 
