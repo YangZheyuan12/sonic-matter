@@ -3,6 +3,7 @@ import { createServer, type Server } from 'node:http'
 import { after, before, describe, it } from 'node:test'
 
 process.env.OPENAI_API_KEY = ''
+process.env.SONIC_MATTER_TEST = '1'
 
 const { app } = await import('./index.js')
 let server: Server
@@ -22,8 +23,9 @@ after(async () => {
 
 describe('HTTP API smoke tests', () => {
   it('reports service health without requiring an API key', async () => {
-    const response = await fetch(`${baseUrl}/api/health`)
+    const response = await fetch(`${baseUrl}/api/health`, { headers: { 'x-request-id': 'p0-health-check' } })
     assert.equal(response.status, 200)
+    assert.equal(response.headers.get('x-request-id'), 'p0-health-check')
     const body = await response.json() as { ok: boolean; agent: boolean }
     assert.equal(body.ok, true)
     assert.equal(body.agent, false)
@@ -48,6 +50,8 @@ describe('HTTP API smoke tests', () => {
       body: '{"concept":',
     })
     assert.equal(malformed.status, 400)
+    const malformedBody = await malformed.json() as { requestId: string }
+    assert.equal(typeof malformedBody.requestId, 'string')
 
     const invalid = await fetch(`${baseUrl}/api/concept/interpret`, {
       method: 'POST',

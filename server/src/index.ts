@@ -15,12 +15,24 @@ const envBaseUrl = process.env.OPENAI_BASE_URL ?? 'https://api.openai.com/v1'
 const envProtocol = process.env.OPENAI_PROTOCOL === 'chat-completions' ? 'chat-completions' : 'responses'
 const generatedDir = path.resolve(process.cwd(), 'generated')
 const replicateModel = process.env.MUSIC_REPLICATE_MODEL ?? 'meta/musicgen'
+const numericEnv = (value: string | undefined, fallback: number, min: number, max: number) => { const parsed = Number(value); return Number.isFinite(parsed) ? Math.max(min, Math.min(max, parsed)) : fallback }
+const providerTimeoutMs = numericEnv(process.env.PROVIDER_TIMEOUT_MS, 180_000, 5_000, 180_000)
+const providerRetryCount = numericEnv(process.env.PROVIDER_RETRY_COUNT, 1, 0, 3)
+const allowedOrigins = (process.env.CORS_ORIGIN ?? '').split(',').map(value => value.trim()).filter(Boolean)
 
-app.use(cors())
-app.use(express.json({ limit: '2mb' }))
+app.use((req, res, next) => {
+  const requestId = req.header('x-request-id')?.trim().slice(0, 80) || crypto.randomUUID()
+  res.setHeader('x-request-id', requestId)
+  res.locals.requestId = requestId
+  next()
+})
+app.use(cors(allowedOrigins.length ? {
+  origin: (origin, callback) => origin && !allowedOrigins.includes(origin) ? callback(new Error('CORS_ORIGIN_NOT_ALLOWED')) : callback(null, true),
+} : undefined))
+app.use(express.json({ limit: process.env.JSON_BODY_LIMIT ?? '2mb' }))
 app.use((error: unknown, _req: Request, res: Response, next: NextFunction) => {
   if (error instanceof SyntaxError && 'body' in error) {
-    return res.status(400).json({ error: '请求体不是有效 JSON，请检查 JSON 格式。' })
+    return res.status(400).json({ error: '请求体不是有效 JSON，请检查 JSON 格式。', requestId: res.locals.requestId ?? 'unknown' })
   }
   return next(error)
 })
@@ -43,9 +55,9 @@ const interpretationSchema = z.object({
 const conceptResponseSchema = z.object({ concept: z.string().min(1).max(80), interpretations: z.array(interpretationSchema).length(3) })
 const conceptInputSchema = z.object({ concept: z.string().trim().min(1).max(80) }).merge(requestWithAgentSchema)
 
-const noteSchema = z.object({ id: z.string(), pitch: z.number().int().min(0).max(127), start: z.number().min(0).max(120), duration: z.number().positive().max(30), velocity: z.number().min(0).max(127) })
-const trackSchema = z.object({ id: z.string(), name: z.string(), kind: z.enum(['midi', 'audio']), instrument: z.string(), color: z.string(), notes: z.array(noteSchema).optional(), clip: z.string().optional(), gain: z.number().min(0).max(1).optional(), pan: z.number().min(-1).max(1).optional(), muted: z.boolean().optional(), solo: z.boolean().optional(), start: z.number().min(0).max(120).optional() })
-const projectSchema = z.object({ title: z.string(), tempo: z.number().min(20).max(300), key: z.string(), duration: z.number().min(1).max(120).optional(), masterGain: z.number().min(0).max(1).optional(), concept: z.object({ word: z.string(), title: z.string(), story: z.array(z.object({ time: z.string(), title: z.string(), text: z.string(), color: z.string() })) }).optional(), tracks: z.array(trackSchema) })
+const noteSchema = z.object({ id: z.string().min(1).max(80), pitch: z.number().int().min(0).max(127), start: z.number().min(0).max(120), duration: z.number().positive().max(30), velocity: z.number().min(0).max(127) })
+const trackSchema = z.object({ id: z.string().min(1).max(80), name: z.string().min(1).max(80), kind: z.enum(['midi', 'audio']), instrument: z.string().min(1).max(60), color: z.string().min(1).max(32), notes: z.array(noteSchema).max(2048).optional(), clip: z.string().max(2000).optional(), gain: z.number().min(0).max(1).optional(), pan: z.number().min(-1).max(1).optional(), muted: z.boolean().optional(), solo: z.boolean().optional(), start: z.number().min(0).max(120).optional() })
+const projectSchema = z.object({ title: z.string().min(1).max(120), tempo: z.number().min(20).max(300), key: z.string().min(1).max(30), duration: z.number().min(1).max(120).optional(), masterGain: z.number().min(0).max(1).optional(), concept: z.object({ word: z.string().min(1).max(80), title: z.string().min(1).max(80), story: z.array(z.object({ time: z.string().max(30), title: z.string().min(1).max(80), text: z.string().min(1).max(240), color: z.string().max(32) })).max(12) }).optional(), tracks: z.array(trackSchema).min(1).max(16) })
 const projectEditSchema = z.object({ project: projectSchema, instruction: z.string().trim().min(1).max(500) }).merge(requestWithAgentSchema)
 const editOperationSchema = z.discriminatedUnion('op', [
   z.object({ op: z.literal('add_track'), track: trackSchema }),
@@ -97,7 +109,7 @@ const musicPlanJsonSchema = { type: 'object', additionalProperties: false, prope
 function resolveAgentConfig(input?: AgentConfig): AgentConfig {
   return { baseUrl: input?.baseUrl || envBaseUrl, apiKey: input?.apiKey || process.env.OPENAI_API_KEY || '', model: input?.model || envModel, protocol: input?.protocol || envProtocol }
 }
-function createClient(config: AgentConfig) { if (!config.apiKey) throw new Error('OPENAI_API_KEY_MISSING'); return new OpenAI({ apiKey: config.apiKey, baseURL: config.baseUrl }) }
+function createClient(config: AgentConfig) { if (!config.apiKey) throw new Error('OPENAI_API_KEY_MISSING'); return new OpenAI({ apiKey: config.apiKey, baseURL: config.baseUrl, timeout: providerTimeoutMs, maxRetries: providerRetryCount }) }
 
 async function structuredResponse<T>(input: string, name: string, schema: Record<string, unknown>, parser: z.ZodType<T>, config: AgentConfig): Promise<T> {
   const client = createClient(config)
@@ -133,7 +145,7 @@ function requiredSecret(name: string) {
   return value
 }
 
-async function fetchWithTimeout(input: string | URL, init: RequestInit = {}, timeoutMs = 180_000) {
+async function fetchWithTimeout(input: string | URL, init: RequestInit = {}, timeoutMs = providerTimeoutMs) {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
   try {
@@ -146,8 +158,23 @@ async function fetchWithTimeout(input: string | URL, init: RequestInit = {}, tim
   }
 }
 
+async function fetchWithRetry(input: string | URL, init: RequestInit = {}, timeoutMs = providerTimeoutMs) {
+  const method = (init.method ?? 'GET').toUpperCase()
+  const attempts = method === 'GET' ? providerRetryCount + 1 : 1
+  let lastError: unknown
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    try {
+      return await fetchWithTimeout(input, init, timeoutMs)
+    } catch (error) {
+      lastError = error
+      if (attempt + 1 < attempts) await new Promise(resolve => setTimeout(resolve, 250 * 2 ** attempt))
+    }
+  }
+  throw lastError
+}
+
 async function downloadGeneratedAudio(url: string, extension: string) {
-  const response = await fetchWithTimeout(url, {}, 120_000)
+  const response = await fetchWithRetry(url, {}, Math.min(providerTimeoutMs, 120_000))
   if (!response.ok) throw new Error(`AUDIO_DOWNLOAD_${response.status}`)
   const buffer = Buffer.from(await response.arrayBuffer())
   await mkdir(generatedDir, { recursive: true })
@@ -171,7 +198,7 @@ async function generateWithReplicate(prompt: string, durationSeconds: number, co
   const deadline = Date.now() + 180_000
   while (['starting', 'processing'].includes(prediction.status) && Date.now() < deadline) {
     await new Promise(resolve => setTimeout(resolve, 2500))
-    const poll = await fetchWithTimeout(`${baseUrl}/predictions/${prediction.id}`, { headers: { Authorization: `Bearer ${token}` } })
+    const poll = await fetchWithRetry(`${baseUrl}/predictions/${prediction.id}`, { headers: { Authorization: `Bearer ${token}` } })
     if (!poll.ok) throw new Error(`REPLICATE_POLL_${poll.status}`)
     prediction = await poll.json() as typeof prediction
   }
@@ -271,9 +298,19 @@ function midiTrack(name: string, tempo: number, notes: Array<z.infer<typeof note
 }
 app.post('/api/export/midi', async (req, res) => { const parsed = projectSchema.safeParse(req.body?.project); if (!parsed.success) return res.status(400).json({ error: 'Project 数据不正确。' }); const project = parsed.data; const midiTracks = project.tracks.filter(track => track.kind === 'midi').map((track, index) => midiTrack(track.name, project.tempo, track.notes ?? [], index === 0)); if (!midiTracks.length) return res.status(400).json({ error: '当前工程没有 MIDI 轨道。' }); const header = [0x4d, 0x54, 0x68, 0x64, ...u32(6), ...u16(1), ...u16(midiTracks.length), ...u16(480)]; const data = Buffer.from([...header, ...midiTracks.flat()]); res.setHeader('Content-Type', 'audio/midi'); res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(project.title)}.mid"`); return res.send(data) })
 
+app.use((error: unknown, req: Request, res: Response, _next: NextFunction) => {
+  if (res.headersSent) return
+  const candidate = error as { status?: unknown; statusCode?: unknown; type?: unknown; message?: unknown } | null
+  const status = typeof candidate?.statusCode === 'number' ? candidate.statusCode : typeof candidate?.status === 'number' ? candidate.status : candidate?.type === 'entity.too.large' ? 413 : candidate?.message === 'CORS_ORIGIN_NOT_ALLOWED' ? 403 : 500
+  const message = candidate?.type === 'entity.too.large' ? '请求体过大，请缩小工程或音频描述后重试。' : candidate?.message === 'CORS_ORIGIN_NOT_ALLOWED' ? '当前来源不在允许的 CORS_ORIGIN 列表中。' : status === 500 ? '服务器内部错误，请稍后重试。' : '请求处理失败。'
+  const requestId = res.locals.requestId ?? 'unknown'
+  console.error(`[request ${requestId}] ${req.method} ${req.originalUrl}`, error)
+  return res.status(status).json({ error: message, requestId })
+})
+
 export { app }
 
-if (!process.argv.includes('--test')) {
+if (process.env.SONIC_MATTER_TEST !== '1') {
   app.listen(port, () => { const config = resolveAgentConfig(); console.log(`Audio Agent server listening on http://localhost:${port} (agent=${Boolean(config.apiKey)}, model=${config.model}, protocol=${config.protocol})`) })
 }
 

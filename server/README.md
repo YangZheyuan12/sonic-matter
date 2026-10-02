@@ -25,7 +25,13 @@ REPLICATE_API_TOKEN=你的_replicate_token
 MUSIC_REPLICATE_MODEL=meta/musicgen
 ELEVENLABS_API_KEY=你的_elevenlabs_key
 PORT=8787
+CORS_ORIGIN=http://127.0.0.1:5173,http://localhost:5173
+JSON_BODY_LIMIT=2mb
+PROVIDER_TIMEOUT_MS=180000
+PROVIDER_RETRY_COUNT=1
 ```
+
+`CORS_ORIGIN` 使用逗号分隔多个浏览器来源；本地开发可以留空。服务端会为每个请求返回 `x-request-id`，错误响应也会带上同一个 `requestId`，便于定位问题。
 
 ## 启动
 
