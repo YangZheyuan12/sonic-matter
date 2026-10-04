@@ -9,6 +9,7 @@ import crypto from 'node:crypto'
 import { buildMidiFile, MidiExportError } from './midi.ts'
 import { badRequest, isAbortError, isClientGone, providerNotConfigured, toAppError, zodDetail } from './errors.ts'
 import { logger } from './logger.ts'
+import { noteSchema, projectSchema, trackSchema } from './projectSchema.ts'
 import {
   agentTimeoutMs,
   asyncHandler,
@@ -47,9 +48,7 @@ const interpretationSchema = z.object({
 const conceptResponseSchema = z.object({ concept: z.string().min(1).max(80), interpretations: z.array(interpretationSchema).length(3) })
 const conceptInputSchema = z.object({ concept: z.string().trim().min(1).max(80) }).merge(requestWithAgentSchema)
 
-const noteSchema = z.object({ id: z.string(), pitch: z.number().int().min(0).max(127), start: z.number().min(0).max(120), duration: z.number().positive().max(30), velocity: z.number().min(0).max(127) })
-const trackSchema = z.object({ id: z.string(), name: z.string(), kind: z.enum(['midi', 'audio']), instrument: z.string(), color: z.string(), notes: z.array(noteSchema).optional(), clip: z.string().optional(), gain: z.number().min(0).max(1).optional(), pan: z.number().min(-1).max(1).optional(), muted: z.boolean().optional(), solo: z.boolean().optional(), start: z.number().min(0).max(120).optional() })
-const projectSchema = z.object({ title: z.string(), tempo: z.number().min(20).max(300), key: z.string(), duration: z.number().min(1).max(120).optional(), masterGain: z.number().min(0).max(1).optional(), concept: z.object({ word: z.string(), title: z.string(), story: z.array(z.object({ time: z.string(), title: z.string(), text: z.string(), color: z.string() })) }).optional(), tracks: z.array(trackSchema) })
+// 工程结构（notes / clips / tracks）统一放在 projectSchema.ts，方便单测。
 const projectEditSchema = z.object({ project: projectSchema, instruction: z.string().trim().min(1).max(500) }).merge(requestWithAgentSchema)
 const editOperationSchema = z.discriminatedUnion('op', [
   z.object({ op: z.literal('add_track'), track: trackSchema }),
