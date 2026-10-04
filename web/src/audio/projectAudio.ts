@@ -1,6 +1,7 @@
-import type { Project, Track } from '../project/model'
-import { audibleTracks, isPlayableClip, LOCAL_SOUND_CLIP_PREFIX, projectDuration, trackGain, trackPan, trackStart } from '../project/model'
-import { decodeSoundClip, renderSoundPreview } from './sfxPreview'
+import type { Project, Track } from '../project/model.ts'
+import { audibleTracks, isPlayableClip, LOCAL_SOUND_CLIP_PREFIX, projectDuration, trackGain, trackPan, trackStart } from '../project/model.ts'
+import { decodeSoundClip, renderSoundPreview } from './sfxPreview.ts'
+import { drumVoice, isDrumTrack, type DrumVoice } from '../project/tracks.ts'
 
 const audioFiles = new Map<string, Promise<ArrayBuffer>>()
 type SampleDefinition = { url: string; rootPitch: number }
@@ -21,8 +22,10 @@ const fetchAudio = (url: string) => {
   return request
 }
 
+/** 鼓组不走采样：合成器里有专门的打击乐音色，也不需要 WAV 根音。 */
 function sampleKey(instrument: string) {
   const value = instrument.toLowerCase()
+  if (/drum|perc|鼓|打击/.test(value)) return 'drums'
   if (/bass|低音/.test(value)) return 'bass'
   if (/cello|string|violin|弦|大提琴/.test(value)) return 'strings'
   if (/bell|glass|钟|玻璃|mallet/.test(value)) return 'bell'
@@ -44,6 +47,80 @@ async function loadInstrumentSample(context: BaseAudioContext, instrument: strin
   }
 }
 
+const noiseBuffers = new WeakMap<BaseAudioContext, AudioBuffer>()
+
+/** 白噪声：军鼓、拍手、镲片都要用，按 context 缓存一份半秒的循环片段。 */
+function noiseBuffer(context: BaseAudioContext) {
+  const cached = noiseBuffers.get(context)
+  if (cached) return cached
+  const buffer = context.createBuffer(1, Math.floor(context.sampleRate * .5), context.sampleRate)
+  const data = buffer.getChannelData(0)
+  for (let index = 0; index < data.length; index += 1) data[index] = Math.random() * 2 - 1
+  noiseBuffers.set(context, buffer)
+  return buffer
+}
+
+const DRUM_NOISE: Record<Exclude<DrumVoice, 'kick' | 'tom'>, { filter: BiquadFilterType; frequency: number; decay: number }> = {
+  snare: { filter: 'bandpass', frequency: 1900, decay: .18 },
+  clap: { filter: 'bandpass', frequency: 1200, decay: .14 },
+  hat: { filter: 'highpass', frequency: 8000, decay: .06 },
+  openhat: { filter: 'highpass', frequency: 7800, decay: .3 },
+  crash: { filter: 'highpass', frequency: 4200, decay: .9 },
+}
+
+/** 打击乐音色：底鼓 / 落地鼓是带音高下坠的正弦，其它是噪声加滤波。 */
+function scheduleDrum(context: BaseAudioContext, voice: DrumVoice, start: number, duration: number, level: number, output: AudioNode) {
+  const sources: AudioScheduledSourceNode[] = []
+  const decay = voice === 'kick' || voice === 'tom' ? (voice === 'kick' ? .32 : .38) : DRUM_NOISE[voice].decay
+  // 音尾：最短给 0.1 秒，最长不超过乐器本身的自然衰减，避免长音符拖着不放。
+  const ring = Math.max(.1, Math.min(decay, duration + .12))
+  if (voice === 'kick' || voice === 'tom') {
+    const oscillator = context.createOscillator()
+    const envelope = context.createGain()
+    oscillator.type = 'sine'
+    oscillator.frequency.setValueAtTime(voice === 'kick' ? 150 : 240, start)
+    oscillator.frequency.exponentialRampToValueAtTime(voice === 'kick' ? 45 : 110, start + Math.min(.18, ring))
+    envelope.gain.setValueAtTime(.0001, start)
+    envelope.gain.exponentialRampToValueAtTime(Math.max(.0002, level), start + .006)
+    envelope.gain.exponentialRampToValueAtTime(.0001, start + ring)
+    oscillator.connect(envelope).connect(output)
+    oscillator.start(start)
+    oscillator.stop(start + ring + .02)
+    return [oscillator]
+  }
+  const settings = DRUM_NOISE[voice]
+  const source = context.createBufferSource()
+  const filter = context.createBiquadFilter()
+  const envelope = context.createGain()
+  source.buffer = noiseBuffer(context)
+  source.loop = true
+  filter.type = settings.filter
+  filter.frequency.value = settings.frequency
+  filter.Q.value = .8
+  envelope.gain.setValueAtTime(.0001, start)
+  envelope.gain.exponentialRampToValueAtTime(Math.max(.0002, level * (voice === 'crash' ? .5 : 1)), start + .004)
+  envelope.gain.exponentialRampToValueAtTime(.0001, start + ring)
+  source.connect(filter).connect(envelope).connect(output)
+  source.start(start)
+  source.stop(start + ring + .02)
+  sources.push(source)
+  if (voice === 'snare') {
+    // 军鼓的“皮声”：加一段短促的三角波，噪声去掉后仍然听得出来是军鼓。
+    const body = context.createOscillator()
+    const bodyGain = context.createGain()
+    body.type = 'triangle'
+    body.frequency.value = 190
+    bodyGain.gain.setValueAtTime(.0001, start)
+    bodyGain.gain.exponentialRampToValueAtTime(Math.max(.0002, level * .6), start + .005)
+    bodyGain.gain.exponentialRampToValueAtTime(.0001, start + Math.min(ring, .2))
+    body.connect(bodyGain).connect(output)
+    body.start(start)
+    body.stop(start + Math.min(ring, .2) + .02)
+    sources.push(body)
+  }
+  return sources
+}
+
 function trackOutput(context: BaseAudioContext, track: Track, destination: AudioNode) {
   const gain = context.createGain()
   const pan = context.createStereoPanner()
@@ -56,12 +133,17 @@ function trackOutput(context: BaseAudioContext, track: Track, destination: Audio
 function scheduleNotes(context: BaseAudioContext, track: Track, destination: AudioNode, origin: number, offset: number, sample: { buffer: AudioBuffer; rootPitch: number } | null = null) {
   const sources: AudioScheduledSourceNode[] = []
   const output = trackOutput(context, track, destination)
+  const drum = isDrumTrack(track)
   for (const note of track.notes ?? []) {
     const noteStart = trackStart(track) + note.start
     const noteEnd = noteStart + note.duration
     if (noteEnd <= offset) continue
     const start = origin + Math.max(0, noteStart - offset)
     const duration = Math.max(.02, noteEnd - Math.max(offset, noteStart))
+    if (drum) {
+      sources.push(...scheduleDrum(context, drumVoice(note.pitch), start, duration, .26 * note.velocity / 127, output))
+      continue
+    }
     const envelope = context.createGain()
     const level = (sample ? .5 : .13) * note.velocity / 127
     envelope.gain.setValueAtTime(.0001, start)

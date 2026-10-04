@@ -290,7 +290,7 @@ app.post('/api/export/midi', asyncHandler(async (req, res) => {
   const parsed = projectSchema.safeParse(req.body?.project)
   if (!parsed.success) throw badRequest('Project 数据不正确。', zodDetail(parsed.error))
   const project = parsed.data
-  const midiTracks = project.tracks.filter(track => track.kind === 'midi').map(track => ({ name: track.name, notes: track.notes ?? [] }))
+  const midiTracks = project.tracks.filter(track => track.kind === 'midi').map(track => ({ name: track.name, notes: track.notes ?? [], drum: /drum|perc|鼓|打击/i.test(track.instrument) }))
   if (!midiTracks.length) throw badRequest('当前工程没有 MIDI 轨道。')
   try {
     const data = buildMidiFile(project.tempo, midiTracks)

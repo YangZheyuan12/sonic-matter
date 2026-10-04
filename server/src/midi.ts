@@ -1,7 +1,7 @@
 /** 标准 MIDI 文件（SMF format 1）生成：纯函数，方便单测与复用。 */
 
 export type MidiNote = { pitch: number; start: number; duration: number; velocity: number }
-export type MidiTrackInput = { name: string; notes: MidiNote[] }
+export type MidiTrackInput = { name: string; notes: MidiNote[]; drum?: boolean }
 
 export class MidiExportError extends Error {}
 
@@ -48,11 +48,14 @@ function trackChunk(track: MidiTrackInput, tempo: number, isFirst: boolean): num
     const mpqn = Math.round(60000000 / tempo)
     events.push({ tick: 0, order: 1, bytes: [0xff, 0x51, 0x03, (mpqn >> 16) & 0xff, (mpqn >> 8) & 0xff, mpqn & 0xff] })
   }
+  // 鼓组写 MIDI channel 10（0 基下标 9）：任何 DAW 都会用 GM 鼓组回放这些音符。
+  const noteOn = track.drum ? 0x99 : 0x90
+  const noteOff = track.drum ? 0x89 : 0x80
   for (const note of clipOverlappingNotes(track.notes)) {
     const on = Math.max(0, Math.round(note.start * tempo / 60 * PPQ))
     const off = Math.max(on + 1, Math.round((note.start + note.duration) * tempo / 60 * PPQ))
-    events.push({ tick: on, order: 2, bytes: [0x90, note.pitch, Math.max(1, Math.min(127, Math.round(note.velocity)))] })
-    events.push({ tick: off, order: 1, bytes: [0x80, note.pitch, 0] })
+    events.push({ tick: on, order: 2, bytes: [noteOn, note.pitch, Math.max(1, Math.min(127, Math.round(note.velocity)))] })
+    events.push({ tick: off, order: 1, bytes: [noteOff, note.pitch, 0] })
   }
   events.sort((a, b) => a.tick - b.tick || a.order - b.order)
   let lastTick = 0

@@ -98,8 +98,9 @@ export default function App() {
   const undoProject = () => { stopPlayback(); setHistory(current => undo(current)) }
   const redoProject = () => { stopPlayback(); setHistory(current => redo(current)) }
   const updateTrack = (id: string, patch: Partial<Track>, label = '调整轨道') => { if (playing) stopPlayback(); applyProject(label, previous => ({ ...previous, tracks: previous.tracks.map(track => track.id === id ? { ...track, ...patch } : track) }), `track:${id}:${Object.keys(patch).sort().join(',')}`) }
-  const addTrack = (instrument: string, name: string) => applyProject(`新建轨道「${name.trim() || instrument}」`, previous => insertTrack(previous, createTrack(previous, instrument, name)))
-  const copyTrack = (id: string) => { const track = project.tracks.find(item => item.id === id); if (!track) return; applyProject(`复制轨道「${track.name}」`, previous => duplicateTrack(previous, id)) }
+  // 新建 / 复制之后直接切到那条轨道，用户可以马上在钢琴卷帘里编辑它。
+  const addTrack = (instrument: string, name: string) => { const created = createTrack(project, instrument, name); setActiveTrackId(created.id); applyProject(`新建轨道「${name.trim() || instrument}」`, previous => insertTrack(previous, created)) }
+  const copyTrack = (id: string) => { const track = project.tracks.find(item => item.id === id); if (!track) return; const next = duplicateTrack(project, id); const copy = next.tracks.find(item => !project.tracks.some(source => source.id === item.id)); if (copy) setActiveTrackId(copy.id); applyProject(`复制轨道「${track.name}」`, () => next) }
   const removeTrackById = (id: string) => { const track = project.tracks.find(item => item.id === id); if (!track || !canRemoveTrack(project, id)) return; if (playing) stopPlayback(); applyProject(`删除轨道「${track.name}」`, previous => removeTrack(previous, id)) }
   const moveTrackById = (id: string, delta: number) => applyProject(delta < 0 ? '轨道上移' : '轨道下移', previous => moveTrack(previous, id, delta))
   const renameTrackById = (id: string, name: string) => applyProject('重命名轨道', previous => renameTrack(previous, id, name), `track-name:${id}`)

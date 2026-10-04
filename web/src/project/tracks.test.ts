@@ -188,3 +188,13 @@ test('instrumentOptions 保留未知乐器作为独立选项', () => {
   // 音频轨只列音频预设（当前没有音频预设，所以是空列表，不能混进 MIDI 乐器）。
   assert.deepEqual(instrumentOptions(track({ kind: 'audio', instrument: 'SFX' })), [])
 })
+
+test('每个鼓件行都能落到一个打击乐音色，吸附结果稳定', () => {
+  const voices = ['kick', 'snare', 'clap', 'hat', 'openhat', 'tom', 'crash']
+  for (const row of trackRows(track({ instrument: '鼓组' }))) {
+    assert.ok(voices.includes(drumVoice(row.pitch)), `${row.label}(${row.pitch}) 应该有音色`)
+    assert.equal(snapPitchToDrum(row.pitch), row.pitch, `${row.label} 吸附后不应该变`)
+  }
+  // 底鼓、军鼓、闭镲、开镲、吊镲必须各不相同，否则听不出来是鼓组。
+  assert.deepEqual(['kick', 'snare', 'hat', 'openhat', 'crash'].map((_, index) => drumVoice([36, 38, 42, 46, 49][index])), ['kick', 'snare', 'hat', 'openhat', 'crash'])
+})

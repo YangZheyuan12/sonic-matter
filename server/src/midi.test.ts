@@ -98,3 +98,15 @@ test('encodeVarLen 覆盖 1-4 字节编码', () => {
 test('没有 MIDI 轨道时抛 MidiExportError，由路由层翻译成 400', () => {
   assert.throws(() => buildMidiFile(120, []), (error: unknown) => error instanceof MidiExportError && /没有 MIDI 轨道/.test(error.message))
 })
+
+test('鼓组轨道写在 MIDI channel 10，普通轨道仍在 channel 1', () => {
+  const [drums, melody] = parse(buildMidiFile(120, [
+    { name: '鼓组', drum: true, notes: [note(36, 0, 0.25, 110), note(38, 0.5, 0.25, 90)] },
+    { name: 'melody', notes: [note(60, 0, 0.5, 100)] },
+  ])).chunks
+  assert.ok(indexOfBytes(drums.body, [0x99, 36, 110]) > 0, '底鼓用 note-on 0x99')
+  assert.ok(indexOfBytes(drums.body, [0x89, 36, 0]) > 0, '底鼓用 note-off 0x89')
+  assert.ok(indexOfBytes(drums.body, [0x99, 38, 90]) > 0)
+  assert.equal(indexOfBytes(drums.body, [0x90, 36]), -1, '鼓组不应该出现 channel 1 的 note-on')
+  assert.ok(indexOfBytes(melody.body, [0x90, 60, 100]) > 0)
+})

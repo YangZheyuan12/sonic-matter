@@ -14,9 +14,6 @@ import {
   pasteOffsetFor,
   quantizeNotes,
   resizeNotes,
-  ROLL_HIGH_PITCH,
-  ROLL_LOW_PITCH,
-  ROLL_ROWS,
   setVelocity,
   snapDuration,
   snapSeconds,
@@ -28,6 +25,7 @@ import {
   type NoteWindow,
   type SnapChoice,
 } from '../project/notes'
+import { isDrumTrack, noteLabel, rowIndexForPitch, snapPitchToDrum, trackRows } from '../project/tracks'
 
 type DragMode = 'move' | 'resize'
 type Drag = { mode: DragMode; ids: string[]; base: Note[]; startX: number; startY: number }
@@ -56,25 +54,31 @@ export default function PianoRoll({ project, playhead = 0, trackId, onTrackChang
   const gridRef = useRef<HTMLDivElement>(null)
 
   const track = midiTracks.find(item => item.id === trackId) ?? midiTracks[0]
+  const drum = isDrumTrack(track)
+  // 行：普通轨是 37 行半音阶，鼓组轨换成鼓件行；所有交互都按“行”定位，两种轨道共用同一套逻辑。
+  const rows = trackRows(track)
+  const rowCount = rows.length
   const notes = sortNotes(track?.notes ?? [])
   const duration = projectDuration(project)
   const beat = 60 / project.tempo
   const snap = snapSeconds(snapChoice, beat)
-  const window: NoteWindow = { duration, snap, lowPitch: ROLL_LOW_PITCH, highPitch: ROLL_HIGH_PITCH }
+  const window: NoteWindow = { duration, snap, lowPitch: rows[rowCount - 1].pitch, highPitch: rows[0].pitch }
   // 选中集合直接从渲染期派生：音符被删除或轨道被替换后失效的 id 会自动被过滤掉，不需要 effect 回写状态。
   const selection = selectedIds.filter(id => notes.some(item => item.id === id))
   const summary = summarizeSelection(notes, selection)
   const soleNote = summary && summary.count === 1 ? notes.find(item => item.id === selection[0]) : undefined
 
   const write = (next: Note[]) => { if (track) updateTrack(track.id, { notes: sortNotes(next) }, '编辑音符') }
-  const applyPatches = (patches: Note[]) => { if (patches.length) write(mergeNotes(notes, patches)) }
+  /** 鼓组轨上音高只允许落在鼓件上：拖出来的中间音高会吸附到最近的鼓件。 */
+  const snapPatches = (patches: Note[]) => drum ? patches.map(note => { const base = notes.find(item => item.id === note.id); return base && base.pitch !== note.pitch ? { ...note, pitch: snapPitchToDrum(note.pitch) } : note }) : patches
+  const applyPatches = (patches: Note[]) => { if (patches.length) write(mergeNotes(notes, snapPatches(patches))) }
   const focusGrid = () => gridRef.current?.focus({ preventScroll: true })
   const gridRect = () => {
     const rect = gridRef.current?.getBoundingClientRect()
     return rect && rect.width > 0 && rect.height > 0 ? rect : null
   }
-  const rowAt = (rect: DOMRect, clientY: number) => Math.min(ROLL_ROWS - 1, Math.max(0, Math.floor((clientY - rect.top) / rect.height * ROLL_ROWS)))
-  const pitchAt = (rect: DOMRect, clientY: number) => ROLL_HIGH_PITCH - rowAt(rect, clientY)
+  const rowAt = (rect: DOMRect, clientY: number) => Math.min(rowCount - 1, Math.max(0, Math.floor((clientY - rect.top) / rect.height * rowCount)))
+  const pitchAt = (rect: DOMRect, clientY: number) => rows[rowAt(rect, clientY)].pitch
   const timeAt = (rect: DOMRect, clientX: number) => (clientX - rect.left) / rect.width * duration
 
   const addNote = (rect: DOMRect, clientX: number, clientY: number, additive: boolean) => {
@@ -98,8 +102,8 @@ export default function PianoRoll({ project, playhead = 0, trackId, onTrackChang
     const hits = notesInRange(notes, {
       startTime: from / rect.width * duration,
       endTime: to / rect.width * duration,
-      lowPitch: ROLL_HIGH_PITCH - rowAt(rect, rect.top + bottom),
-      highPitch: ROLL_HIGH_PITCH - rowAt(rect, rect.top + top),
+      lowPitch: rows[rowAt(rect, rect.top + bottom)].pitch,
+      highPitch: rows[rowAt(rect, rect.top + top)].pitch,
     })
     setSelectedIds(current => (additive ? [...new Set([...current, ...hits])] : hits))
   }
@@ -161,7 +165,7 @@ export default function PianoRoll({ project, playhead = 0, trackId, onTrackChang
       applyPatches(resizeNotes(drag.base, drag.ids, timeAt(rect, event.clientX) - timeAt(rect, drag.startX), window))
       return
     }
-    applyPatches(moveNotes(drag.base, drag.ids, { time: timeAt(rect, event.clientX) - timeAt(rect, drag.startX), pitch: -Math.round((event.clientY - drag.startY) / rect.height * ROLL_ROWS) }, window))
+    applyPatches(moveNotes(drag.base, drag.ids, { time: timeAt(rect, event.clientX) - timeAt(rect, drag.startX), pitch: -Math.round((event.clientY - drag.startY) / rect.height * rowCount) }, window))
   }
 
   const noteContextMenu = (event: MouseEvent<HTMLElement>, note: Note) => {
@@ -173,7 +177,7 @@ export default function PianoRoll({ project, playhead = 0, trackId, onTrackChang
 
   const pasteAt = (items: Note[], offset: number) => {
     if (!track || !items.length) return
-    const result = pasteNotes(notes, items, { offset, duration, snap, lowPitch: ROLL_LOW_PITCH, highPitch: ROLL_HIGH_PITCH, makeIds: count => makeNoteIds(track.id, notes, count) })
+    const result = pasteNotes(notes, items, { offset, duration, snap, lowPitch: rows[rowCount - 1].pitch, highPitch: rows[0].pitch, makeIds: count => makeNoteIds(track.id, notes, count) })
     if (!result.ids.length) return
     write(result.notes)
     setSelectedIds(result.ids)
@@ -182,7 +186,17 @@ export default function PianoRoll({ project, playhead = 0, trackId, onTrackChang
   const pasteClipboard = () => { if (clipboard.length) pasteAt(clipboard, pasteOffsetFor(playhead, Math.min(...clipboard.map(item => item.start)), snap)) }
   const duplicateSelection = () => { if (selection.length) pasteAt(copyNotes(notes, selection), snap > 0 ? snap : FREE_STEP_SECONDS) }
   const quantizeSelection = () => applyPatches(quantizeNotes(notes, selection, window))
-  const transposeSelection = (semitones: number) => applyPatches(nudgeNotes(notes, selection, { semitones }, window))
+  /** 按行移动音高：普通轨就是半音，鼓组轨是上/下一个鼓件。delta 为正表示往上（音更高）。 */
+  const moveSelectionRows = (delta: number) => {
+    const target = new Set(selection)
+    const patches: Note[] = []
+    for (const note of notes) {
+      if (!target.has(note.id)) continue
+      const pitch = rows[Math.min(rowCount - 1, Math.max(0, rowIndexForPitch(rows, note.pitch) - delta))].pitch
+      if (pitch !== note.pitch) patches.push({ ...note, pitch })
+    }
+    applyPatches(patches)
+  }
   const setSelectionVelocity = (velocity: number) => applyPatches(setVelocity(notes, selection, velocity))
   const patchSelection = (patch: Partial<Note>) => {
     const target = new Set(selection)
@@ -210,7 +224,7 @@ export default function PianoRoll({ project, playhead = 0, trackId, onTrackChang
     if (!vertical && !horizontal) return
     if (!selection.length) return
     event.preventDefault()
-    if (vertical) transposeSelection(vertical * (event.shiftKey ? 12 : 1))
+    if (vertical) moveSelectionRows(vertical * (event.shiftKey ? (drum ? 2 : 12) : 1))
     else applyPatches(nudgeNotes(notes, selection, { steps: horizontal * (event.shiftKey ? 4 : 1) }, window))
   }
 
@@ -237,11 +251,11 @@ export default function PianoRoll({ project, playhead = 0, trackId, onTrackChang
       </div>
     </div>
     <div className="roll-status">
-      <span>网格 {snap > 0 ? `${snap.toFixed(2)}s` : '自由'} · 音域 {pitchName(ROLL_LOW_PITCH)}–{pitchName(ROLL_HIGH_PITCH)} · {notes.length} 个音符</span>
-      <span>{activeCount ? `已选 ${activeCount} 个 · 方向键微调 · Shift + 方向键 = 4 格 / 八度` : '点击空白新增 · 拖动框选 · Shift + 点击加选'}</span>
+      <span>网格 {snap > 0 ? `${snap.toFixed(2)}s` : '自由'} · {drum ? `${rowCount} 个鼓件` : `音域 ${pitchName(rows[rowCount - 1].pitch)}–${pitchName(rows[0].pitch)}`} · {notes.length} 个音符</span>
+      <span>{activeCount ? `已选 ${activeCount} 个 · 方向键微调 · Shift + 方向键 = 4 格 / ${drum ? '两个鼓件' : '八度'}` : '点击空白新增 · 拖动框选 · Shift + 点击加选'}</span>
     </div>
     <div className="piano-roll">
-      <div className="piano-keys">{Array.from({ length: ROLL_ROWS }, (_, index) => { const pitch = ROLL_HIGH_PITCH - index; return <span key={pitch} className={pitch % 12 === 1 || pitch % 12 === 3 || pitch % 12 === 6 || pitch % 12 === 8 || pitch % 12 === 10 ? 'black-key' : ''}>{pitchName(pitch)}</span> })}</div>
+      <div className="piano-keys">{rows.map(row => <span key={row.pitch} className={row.black ? 'black-key' : ''}>{row.label}</span>)}</div>
       <div
         ref={gridRef}
         className="roll-grid"
@@ -254,20 +268,20 @@ export default function PianoRoll({ project, playhead = 0, trackId, onTrackChang
         onPointerCancel={() => setMarquee(null)}
         onKeyDown={keyDown}
       >
-        {Array.from({ length: ROLL_ROWS }, (_, index) => <i className="roll-row" key={index} style={{ top: `${index / ROLL_ROWS * 100}%`, height: `${100 / ROLL_ROWS}%` }} />)}
+        {Array.from({ length: rowCount }, (_, index) => <i className={`roll-row${rows[index].black ? ' black-key' : ''}`} key={index} style={{ top: `${index / rowCount * 100}%`, height: `${100 / rowCount}%` }} />)}
         {Array.from({ length: Math.floor(duration / (snap || beat / 4)) + 1 }, (_, index) => <i className={`roll-beat ${index % 2 === 0 ? 'strong' : ''}`} key={index} style={{ left: `${index * (snap || beat / 4) / duration * 100}%` }} />)}
         {notes.map(note => <button
           key={note.id}
           className={`roll-note ${selection.includes(note.id) ? 'selected' : ''}`}
-          title={`${pitchName(note.pitch)} · ${note.start.toFixed(2)}s · ${note.duration.toFixed(2)}s · 力度 ${note.velocity}`}
-          style={{ left: `${note.start / duration * 100}%`, top: `${(ROLL_HIGH_PITCH - note.pitch) / ROLL_ROWS * 100}%`, width: `${Math.max(.8, note.duration / duration * 100)}%`, height: `${Math.max(2.5, 100 / ROLL_ROWS - .8)}%`, background: track?.color }}
+          title={`${noteLabel(track, note.pitch)} · ${note.start.toFixed(2)}s · ${note.duration.toFixed(2)}s · 力度 ${note.velocity}`}
+          style={{ left: `${note.start / duration * 100}%`, top: `${rowIndexForPitch(rows, note.pitch) / rowCount * 100}%`, width: `${Math.max(.8, note.duration / duration * 100)}%`, height: `${Math.max(2.5, 100 / rowCount - .8)}%`, background: track?.color }}
           onPointerDown={event => notePointerDown(event, note, 'move')}
           onPointerMove={notePointerMove}
           onPointerUp={() => setDrag(null)}
           onPointerCancel={() => setDrag(null)}
           onContextMenu={event => noteContextMenu(event, note)}
         >
-          <span className="roll-note-label">{pitchName(note.pitch)}</span>
+          <span className="roll-note-label">{noteLabel(track, note.pitch)}</span>
           <i className="roll-resize" onPointerDown={event => notePointerDown(event, note, 'resize')} />
         </button>)}
         {marquee?.moved ? <span className="roll-marquee" style={{ left: Math.min(marquee.x0, marquee.x1), top: Math.min(marquee.y0, marquee.y1), width: Math.abs(marquee.x1 - marquee.x0), height: Math.abs(marquee.y1 - marquee.y0) }} /> : null}
@@ -276,19 +290,21 @@ export default function PianoRoll({ project, playhead = 0, trackId, onTrackChang
     <div className="note-inspector">
       <div>
         <small>{activeCount > 1 ? 'MULTI SELECTION' : 'SELECTED NOTE'}</small>
-        <strong>{activeCount > 1 ? `${activeCount} 个音符` : soleNote ? pitchName(soleNote.pitch) : '未选择'}</strong>
+        <strong>{activeCount > 1 ? `${activeCount} 个音符` : soleNote ? noteLabel(track, soleNote.pitch) : '未选择'}</strong>
       </div>
       {activeCount > 1 ? <div>
         <small>音高范围 / 时间范围</small>
-        <strong>{pitchName(summary!.lowPitch)}–{pitchName(summary!.highPitch)} · {summary!.minStart.toFixed(2)}–{summary!.maxEnd.toFixed(2)}s</strong>
-      </div> : <label>音高<input aria-label="选中音符音高" type="number" min={ROLL_LOW_PITCH} max={ROLL_HIGH_PITCH} value={soleNote?.pitch ?? 60} disabled={!soleNote} onChange={event => patchSelection({ pitch: Math.round(Number(event.target.value)) })} /></label>}
+        <strong>{noteLabel(track, summary!.lowPitch)}–{noteLabel(track, summary!.highPitch)} · {summary!.minStart.toFixed(2)}–{summary!.maxEnd.toFixed(2)}s</strong>
+      </div> : <label>音高{drum
+        ? <select aria-label="选中音符音高" value={snapPitchToDrum(soleNote?.pitch ?? rows[0].pitch)} disabled={!soleNote} onChange={event => patchSelection({ pitch: Number(event.target.value) })}>{rows.map(row => <option key={row.pitch} value={row.pitch}>{row.label}</option>)}</select>
+        : <input aria-label="选中音符音高" type="number" min={rows[rowCount - 1].pitch} max={rows[0].pitch} value={soleNote?.pitch ?? 60} disabled={!soleNote} onChange={event => patchSelection({ pitch: Math.round(Number(event.target.value)) })} />}</label>}
       {activeCount > 1 ? <div className="roll-nudge-cell">
-        <small>移调（半音）</small>
+        <small>{drum ? '移动鼓件（行）' : '移调（半音）'}</small>
         <span className="roll-nudge">
-          <button className="roll-action" onClick={() => transposeSelection(-12)}>−12</button>
-          <button className="roll-action" onClick={() => transposeSelection(-1)}>−1</button>
-          <button className="roll-action" onClick={() => transposeSelection(1)}>+1</button>
-          <button className="roll-action" onClick={() => transposeSelection(12)}>+12</button>
+          <button className="roll-action" title={drum ? '往下 2 个鼓件' : '往下八度'} onClick={() => moveSelectionRows(drum ? -2 : -12)}>{drum ? '−2' : '−12'}</button>
+          <button className="roll-action" title={drum ? '往下一个鼓件' : '往下半音'} onClick={() => moveSelectionRows(-1)}>−1</button>
+          <button className="roll-action" title={drum ? '往上一个鼓件' : '往上半音'} onClick={() => moveSelectionRows(1)}>+1</button>
+          <button className="roll-action" title={drum ? '往上 2 个鼓件' : '往上八度'} onClick={() => moveSelectionRows(drum ? 2 : 12)}>{drum ? '+2' : '+12'}</button>
         </span>
       </div> : <label>起点(s)<input aria-label="选中音符起点" type="number" min="0" max={duration} step="0.01" value={soleNote?.start.toFixed(2) ?? '0.00'} disabled={!soleNote} onChange={event => patchSelection({ start: snapTime(Number(event.target.value), snap, duration) })} /></label>}
       {activeCount > 1 ? <label>力度<input aria-label="选中音符力度" type="number" min="1" max="127" value={summary!.minVelocity} onChange={event => setSelectionVelocity(Number(event.target.value))} /></label> : <label>时长(s)<input aria-label="选中音符时长" type="number" min={Math.max(MIN_NOTE_DURATION, snap).toFixed(2)} max={duration} step="0.01" value={soleNote?.duration.toFixed(2) ?? MIN_NOTE_DURATION.toFixed(2)} disabled={!soleNote} onChange={event => patchSelection({ duration: snapDuration(Number(event.target.value), soleNote?.start ?? 0, snap, duration) })} /></label>}
@@ -298,6 +314,6 @@ export default function PianoRoll({ project, playhead = 0, trackId, onTrackChang
         <button className="secondary" onClick={() => removeSelection(selection)} disabled={!activeCount}>删除选中</button>
       </div>
     </div>
-    <p className="hint">点击空白新增；拖动音符改变时间和音高，拖右下角改变时长；拖动空白框选、Shift + 点击加选；方向键微调（Shift 为 4 格 / 八度）；Ctrl/Cmd + C/V/D 复制、粘贴到播放头（播放头靠前时错开一格）、再制；Ctrl/Cmd + A 全选；Delete 删除；右键删除。力度与吸附网格会立即写回 Project JSON。</p>
+    <p className="hint">{drum ? '鼓组轨：纵向每一行是一件鼓，方向键 / 上下拖动直接换鼓件，音高自动吸附到最近的鼓件。' : ''}点击空白新增；拖动音符改变时间和音高，拖右下角改变时长；拖动空白框选、Shift + 点击加选；方向键微调（Shift 为 4 格 / 八度）；Ctrl/Cmd + C/V/D 复制、粘贴到播放头（播放头靠前时错开一格）、再制；Ctrl/Cmd + A 全选；Delete 删除；右键删除。力度与吸附网格会立即写回 Project JSON。</p>
   </section>
 }
