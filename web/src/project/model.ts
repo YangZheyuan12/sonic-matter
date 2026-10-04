@@ -38,6 +38,26 @@ export const trackGain = (track: Track) => Math.max(0, Math.min(1, track.gain ??
 export const trackPan = (track: Track) => Math.max(-1, Math.min(1, track.pan ?? 0))
 export const trackStart = (track: Track) => Math.max(0, track.start ?? 0)
 
+/** 本地渲染音效的 clip 前缀：`local-sfx:<base64(JSON)>`，播放时由浏览器合成器还原。 */
+export const LOCAL_SOUND_CLIP_PREFIX = 'local-sfx:'
+
+/** audio 轨的 clip 是否真的能被渲染出声（服务端生成文件 / 内联音频 / 本地音效计划）。
+ *  只写入了计划文本、没有音频来源的轨道会被判定为不可播放，避免出现“有轨道但没声音”。 */
+export function isPlayableClip(clip?: string) {
+  if (typeof clip !== 'string' || !clip) return false
+  return clip.startsWith('/generated/') || clip.startsWith(LOCAL_SOUND_CLIP_PREFIX) || clip.startsWith('data:audio/') || clip.startsWith('blob:') || clip.startsWith('http')
+}
+
+/** 录制旋律与“当前旋律”统一指向的 MIDI 轨：优先 id 为 melody 的轨道，否则第一条 MIDI 轨。 */
+export function primaryMelodyTrack(project: Project) {
+  return project.tracks.find(track => track.kind === 'midi' && track.id === 'melody') ?? project.tracks.find(track => track.kind === 'midi')
+}
+
+/** 工程里完全没有 MIDI 轨时，录制用的兜底轨道。 */
+export function melodyTrackTemplate(notes: Note[] = []): Track {
+  return { id: 'melody', name: '灵感旋律', kind: 'midi', instrument: 'Glass Keys', color: '#7dd3fc', notes, gain: .8, pan: 0, muted: false, solo: false, start: 0 }
+}
+
 export function audibleTracks(project: Project) {
   const hasSolo = project.tracks.some(track => track.solo)
   return project.tracks.filter(track => !track.muted && (!hasSolo || track.solo))

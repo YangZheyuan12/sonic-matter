@@ -1,5 +1,6 @@
 import type { Project, Track } from '../project/model'
-import { audibleTracks, projectDuration, trackGain, trackPan, trackStart } from '../project/model'
+import { audibleTracks, isPlayableClip, LOCAL_SOUND_CLIP_PREFIX, projectDuration, trackGain, trackPan, trackStart } from '../project/model'
+import { decodeSoundClip, renderSoundPreview } from './sfxPreview'
 
 const audioFiles = new Map<string, Promise<ArrayBuffer>>()
 type SampleDefinition = { url: string; rootPitch: number }
@@ -87,10 +88,25 @@ function scheduleNotes(context: BaseAudioContext, track: Track, destination: Aud
   return sources
 }
 
-async function decodeClip(context: BaseAudioContext, track: Track) {
-  if (!track.clip?.startsWith('/generated/')) return []
-  const bytes = await fetchAudio(track.clip)
-  return context.decodeAudioData(bytes.slice(0))
+async function decodeClip(context: BaseAudioContext, track: Track): Promise<AudioBuffer | null> {
+  // 本地音效计划：clip 里只存参数，播放 / 导出时用浏览器合成器现场渲染。
+  if (track.clip?.startsWith(LOCAL_SOUND_CLIP_PREFIX)) {
+    const plan = decodeSoundClip(track.clip)
+    if (!plan) return null
+    try {
+      return await renderSoundPreview(plan.description, plan.mixer)
+    } catch {
+      return null
+    }
+  }
+  if (!isPlayableClip(track.clip)) return null
+  // 单条 clip 载入失败（文件被删、服务重启）只跳过这条轨道，不要拖垮整个工程的播放。
+  try {
+    const bytes = await fetchAudio(track.clip!)
+    return await context.decodeAudioData(bytes.slice(0))
+  } catch {
+    return null
+  }
 }
 
 function scheduleClip(context: BaseAudioContext, track: Track, buffer: AudioBuffer, destination: AudioNode, origin: number, offset: number) {
@@ -117,10 +133,10 @@ export async function playProjectAudio(project: Project, offset = 0) {
   liveContext ??= new AudioContext()
   if (liveContext.state === 'suspended') await liveContext.resume()
   const tracks = audibleTracks(project)
-  const audioTracks = tracks.filter(track => track.kind === 'audio' && track.clip?.startsWith('/generated/'))
+  const audioTracks = tracks.filter(track => track.kind === 'audio' && isPlayableClip(track.clip))
   const midiTracks = tracks.filter(track => track.kind === 'midi')
   const [decodedClips, decodedSamples] = await Promise.all([
-    Promise.all(audioTracks.map(async track => ({ track, buffer: await decodeClip(liveContext!, track) as AudioBuffer }))),
+    Promise.all(audioTracks.map(async track => ({ track, buffer: await decodeClip(liveContext!, track) }))),
     Promise.all(midiTracks.map(async track => ({ track, sample: await loadInstrumentSample(liveContext!, track.instrument) }))),
   ])
   if (generation !== playbackGeneration) return false
@@ -129,7 +145,7 @@ export async function playProjectAudio(project: Project, offset = 0) {
   master.connect(liveContext.destination)
   const origin = liveContext.currentTime + .06
   liveSources.push(...decodedSamples.flatMap(({ track, sample }) => scheduleNotes(liveContext!, track, master, origin, offset, sample)))
-  liveSources.push(...decodedClips.flatMap(({ track, buffer }) => scheduleClip(liveContext!, track, buffer, master, origin, offset)))
+  liveSources.push(...decodedClips.flatMap(clip => clip.buffer ? scheduleClip(liveContext!, clip.track, clip.buffer, master, origin, offset) : []))
   return true
 }
 
@@ -141,13 +157,13 @@ export async function renderProjectAudio(project: Project) {
   master.gain.value = Math.max(0, Math.min(1, project.masterGain ?? .9))
   master.connect(context.destination)
   const tracks = audibleTracks(project)
-  const audioTracks = tracks.filter(track => track.kind === 'audio' && track.clip?.startsWith('/generated/'))
+  const audioTracks = tracks.filter(track => track.kind === 'audio' && isPlayableClip(track.clip))
   const midiTracks = tracks.filter(track => track.kind === 'midi')
   const [decodedClips, decodedSamples] = await Promise.all([
-    Promise.all(audioTracks.map(async track => ({ track, buffer: await decodeClip(context, track) as AudioBuffer }))),
+    Promise.all(audioTracks.map(async track => ({ track, buffer: await decodeClip(context, track) }))),
     Promise.all(midiTracks.map(async track => ({ track, sample: await loadInstrumentSample(context, track.instrument) }))),
   ])
   decodedSamples.forEach(({ track, sample }) => scheduleNotes(context, track, master, 0, 0, sample))
-  decodedClips.forEach(({ track, buffer }) => scheduleClip(context, track, buffer, master, 0, 0))
+  decodedClips.forEach(clip => { if (clip.buffer) scheduleClip(context, clip.track, clip.buffer, master, 0, 0) })
   return context.startRendering()
 }

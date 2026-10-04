@@ -19,7 +19,7 @@
 ```env
 OPENAI_API_KEY=你的_api_key
 OPENAI_BASE_URL=https://api.openai.com/v1
-OPENAI_MODEL=gpt-6-astra
+OPENAI_MODEL=gpt-4.1-mini
 OPENAI_PROTOCOL=responses
 REPLICATE_API_TOKEN=你的_replicate_token
 MUSIC_REPLICATE_MODEL=meta/musicgen
@@ -32,12 +32,12 @@ PORT=8787
 在两个终端分别运行：
 
 ```powershell
-cd "D:\myProjects\腾讯音乐黑客松\server"
+cd server
 npm run start
 ```
 
 ```powershell
-cd "D:\myProjects\腾讯音乐黑客松\web"
+cd ..\web
 npm run dev
 ```
 

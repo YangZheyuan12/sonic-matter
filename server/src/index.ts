@@ -10,7 +10,7 @@ import crypto from 'node:crypto'
 
 const app = express()
 const port = Number(process.env.PORT ?? 8787)
-const envModel = process.env.OPENAI_MODEL ?? 'gpt-6-astra'
+const envModel = process.env.OPENAI_MODEL ?? 'gpt-4.1-mini'
 const envBaseUrl = process.env.OPENAI_BASE_URL ?? 'https://api.openai.com/v1'
 const envProtocol = process.env.OPENAI_PROTOCOL === 'chat-completions' ? 'chat-completions' : 'responses'
 const generatedDir = path.resolve(process.cwd(), 'generated')
@@ -264,7 +264,20 @@ function midiTrack(name: string, tempo: number, notes: Array<z.infer<typeof note
   const ppq = 480; const events: Array<{ tick: number; order: number; bytes: number[] }> = []
   const trackName = textBytes(name); events.push({ tick: 0, order: 0, bytes: [0xff, 0x03, trackName.length, ...trackName] })
   if (isFirst) { const mpqn = Math.round(60000000 / tempo); events.push({ tick: 0, order: 1, bytes: [0xff, 0x51, 0x03, (mpqn >> 16) & 0xff, (mpqn >> 8) & 0xff, mpqn & 0xff] }) }
-  for (const note of notes) { const on = Math.max(0, Math.round(note.start * tempo / 60 * ppq)); const off = Math.max(on + 1, Math.round((note.start + note.duration) * tempo / 60 * ppq)); events.push({ tick: on, order: 2, bytes: [0x90, note.pitch, Math.max(1, Math.min(127, Math.round(note.velocity)))] }); events.push({ tick: off, order: 1, bytes: [0x80, note.pitch, 0] }) }
+  // 同一个音高上如果音符重叠，前一个音的 note-off 会提前关掉后一个音。
+  // 导出前按音高分组排序，把重叠部分裁掉，保证导出的 MIDI 听感和网页播放一致。
+  const byPitch = new Map<number, Array<z.infer<typeof noteSchema>>>()
+  for (const note of notes) { const group = byPitch.get(note.pitch); if (group) group.push(note); else byPitch.set(note.pitch, [note]) }
+  const sanitized: Array<z.infer<typeof noteSchema>> = []
+  for (const group of byPitch.values()) {
+    group.sort((a, b) => a.start - b.start)
+    group.forEach((note, index) => {
+      const next = group[index + 1]
+      const end = next ? Math.min(note.start + note.duration, Math.max(note.start, next.start)) : note.start + note.duration
+      sanitized.push({ ...note, duration: Math.max(.01, end - note.start) })
+    })
+  }
+  for (const note of sanitized) { const on = Math.max(0, Math.round(note.start * tempo / 60 * ppq)); const off = Math.max(on + 1, Math.round((note.start + note.duration) * tempo / 60 * ppq)); events.push({ tick: on, order: 2, bytes: [0x90, note.pitch, Math.max(1, Math.min(127, Math.round(note.velocity)))] }); events.push({ tick: off, order: 1, bytes: [0x80, note.pitch, 0] }) }
   events.sort((a, b) => a.tick - b.tick || a.order - b.order); let lastTick = 0; const body: number[] = []
   for (const event of events) { body.push(...varLen(Math.max(0, event.tick - lastTick)), ...event.bytes); lastTick = event.tick }
   body.push(0x00, 0xff, 0x2f, 0x00); return [0x4d, 0x54, 0x72, 0x6b, ...u32(body.length), ...body]
