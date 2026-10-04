@@ -195,3 +195,29 @@
 :root[data-theme="light"] .track-rename{background:#fff;color:#202230}
 @media(prefers-color-scheme:light){:root[data-theme="system"] .track-name{color:#1d2030}:root[data-theme="system"] .track-instrument select,:root[data-theme="system"] .track-create select,:root[data-theme="system"] .track-create input,:root[data-theme="system"] .track-rename{background:#fff;color:#202230}}
 @media(max-width:620px){.track-actions{grid-template-columns:repeat(3,minmax(0,1fr))}.track-instrument{grid-template-columns:1fr}}
+
+/* 音频片段编辑（item 7a）：时间线上的可拖动片段 + 片段检查器 */
+.audio-clip{right:auto;top:22px;height:46px;padding:0;cursor:grab;touch-action:none;user-select:none;display:flex;align-items:center;transition:box-shadow .15s,filter .15s}
+.audio-clip:hover{filter:brightness(1.16)}
+.audio-clip.selected{outline:1px solid rgba(255,255,255,.72);outline-offset:1px;box-shadow:0 0 16px rgba(125,211,252,.45);z-index:3}
+.audio-clip:active{cursor:grabbing}
+.audio-clip .clip-label{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:0 10px;font-size:9px;letter-spacing:.12em;pointer-events:none}
+.clip-handle{position:absolute;top:0;bottom:0;left:0;width:8px;cursor:ew-resize;background:linear-gradient(90deg,rgba(255,255,255,.34),rgba(255,255,255,0));z-index:2}
+.clip-handle.right{left:auto;right:0;background:linear-gradient(270deg,rgba(255,255,255,.34),rgba(255,255,255,0))}
+.clip-fade{position:absolute;top:0;bottom:0;pointer-events:none;opacity:.85}
+.clip-fade.in{left:0;background:linear-gradient(to top right,rgba(5,6,16,.82) 49%,transparent 51%)}
+.clip-fade.out{right:0;background:linear-gradient(to top left,rgba(5,6,16,.82) 49%,transparent 51%)}
+.clip-inspector{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1.4fr) repeat(3,minmax(0,1fr)) auto;align-items:center;gap:14px;margin-top:14px;padding:12px 16px;border:1px solid rgba(125,211,252,.34);border-radius:6px;background:rgba(9,12,30,.72)}
+.clip-inspector>div:not(.clip-actions){display:grid;gap:3px;min-width:0}
+.clip-inspector small{color:var(--muted);font-size:8px;letter-spacing:.16em}
+.clip-inspector strong{font-size:11px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.clip-inspector label{display:grid;gap:4px;color:var(--muted);font-size:9px}
+.clip-inspector input[type=range]{width:100%;min-width:0}
+.clip-actions{display:flex;gap:8px}
+.clip-actions button{margin:0;padding:7px 12px;border-radius:4px;font-size:10px;white-space:nowrap}
+.clip-actions button:disabled{opacity:.34;cursor:not-allowed}
+:root[data-theme="light"] .clip-inspector{background:rgba(255,255,255,.72)}
+:root[data-theme="light"] .audio-clip .clip-label{color:#fff}
+@media(prefers-color-scheme:light){:root[data-theme="system"] .clip-inspector{background:rgba(255,255,255,.72)}}
+@media(max-width:980px){.clip-inspector{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:620px){.clip-inspector{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.clip-actions{grid-column:1/-1;justify-content:flex-start}}
