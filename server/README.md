@@ -27,6 +27,14 @@ ELEVENLABS_API_KEY=你的_elevenlabs_key
 PORT=8787
 ```
 
+## 测试
+
+```powershell
+npm test
+```
+
+用 Node 自带的 `node:test` 运行 `src/**/*.test.ts`（不需要额外依赖）。注意 Node 原生运行时不支持省略扩展名的相对导入，因此服务端源码里的相对导入统一写成 `./midi.ts` 这种形式；`tsconfig.json` 已打开 `allowImportingTsExtensions`，`tsx` 与 `tsc` 都能正常解析。
+
 ## 启动
 
 在两个终端分别运行：

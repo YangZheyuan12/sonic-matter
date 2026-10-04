@@ -16,9 +16,13 @@ npm run dev
 ## 脚本
 
 - `npm run dev`：开发服务器（已固定 host / port）。
+- `npm run typecheck`：`tsc -b`（应用 + 测试两份 config）。
 - `npm run build`：`tsc -b` 类型检查 + 生产构建。
 - `npm run lint`：oxlint。
+- `npm test`：`node --test "src/**/*.test.ts"`。
 - `npm run preview`：预览构建产物。
+
+在仓库根目录也可以用 `npm run verify` 一次跑完上述检查（含 server）。
 
 ## 目录
 
@@ -30,8 +34,24 @@ src/
   audio/projectAudio.ts  # 工程播放与离线渲染（本地音色、audio clip）
   audio/sfxPreview.ts    # 音效本地合成：实时试听 + 离线渲染 + clip 编解码
   audio/exportAudio.ts   # WAV（手写 RIFF）与 MP3（lamejs）编码
+  **/*.test.ts           # 与源码同目录的单测（node:test）
 public/soundfonts/       # 可选 WAV 采样；缺失时自动回退浏览器合成器
 ```
+
+## 测试
+
+测试与源码同目录（`src/project/model.test.ts`、`src/audio/sfxPreview.test.ts`），用 Node 自带的 `node:test` + Node 原生 TypeScript 支持运行，不引入 vitest / jsdom：
+
+```powershell
+npm test
+```
+
+两点约定：
+
+1. 原生运行时**不支持省略扩展名的相对导入**，所以测试文件（以及被测试的模块）里相对导入要写成 `./model.ts`；Vite 与 tsc 都已经打开 `allowImportingTsExtensions`，不影响构建。
+2. 只有测试需要 Node 类型，所以单测走 `tsconfig.test.json`（`types: ["node"]`），应用代码仍然是 `types: ["vite/client"]`，避免浏览器代码误用 Node API。
+
+以后如果要做组件 / DOM 测试，再引入 vitest + jsdom 即可，纯逻辑测试不必迁移。
 
 ## 音频说明
 

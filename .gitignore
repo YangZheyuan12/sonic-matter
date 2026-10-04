@@ -18,6 +18,9 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
+# 临时探针与一次性脚本（约定：所有中间产物放 _tmp/，不入库）
+_tmp/
+
 # Local QA artifacts
 web/homepage-*.png
 web/pitch-labels-check.png

@@ -2,6 +2,8 @@
 
 一个把手势、抽象概念与 Agent 生成结果转化为可编辑音乐工程的交互式 Web Demo。
 
+[![CI](https://github.com/YangZheyuan12/sonic-matter/actions/workflows/ci.yml/badge.svg)](https://github.com/YangZheyuan12/sonic-matter/actions/workflows/ci.yml)
+
 ## 主要功能
 
 - **灵感空间**：在粒子画布中滑动演奏，并把手势记录为 MIDI 音符。
@@ -18,7 +20,17 @@
 
 ## 本地启动
 
-要求 Node.js 20 或更高版本。
+要求 Node.js 22.18 或更高版本（`.nvmrc` 固定为 24，CI 也用这个版本；运行 `npm test` 依赖 Node 自带 TypeScript 支持，因此不要用更低的版本）。
+
+### 0. 一条命令同时启动前后端
+
+```powershell
+npm run dev
+```
+
+等价于在 `server/` 与 `web/` 里各跑一次 `npm run dev`（依赖仍需在两个目录各自 `npm install` 一次）：按 Ctrl+C 会连子进程一起退出、端口一起释放。
+
+也可以按下面两个小节开两个终端手动启动。
 
 ### 1. 启动后端
 
@@ -59,16 +71,32 @@ web/public/soundfonts/
 
 ## 验证
 
-```powershell
-cd web
-npx tsc -b
-npm run lint
-npm run build
+在仓库根目录执行：
 
-cd ../server
-npm run typecheck
+```powershell
+npm run verify
+```
+
+它依次跑 `typecheck`（server + web）→ `lint` → `test` → `build`。也可以单独执行：
+
+```powershell
+npm run typecheck   # server: tsc --noEmit，web: tsc -b
+npm run lint        # oxlint
+npm test            # node:test（web 12 例 + server 7 例）
+npm run build       # web 生产构建
+```
+
+测试用 Node 自带的 `node:test`，不引入额外依赖，离线也能跑。推送后由 `.github/workflows/ci.yml` 在 CI 里跑同一套命令。
+
+## 项目结构
+
+```text
+server/   Express + OpenAI/Replicate/ElevenLabs 的 Agent 与音频导出服务（8787）
+web/      React + TypeScript + Vite 前端（5173，`/api` 与 `/generated` 代理到 8787）
+tools/    仓库级脚本（dev.mjs：一条命令同时启动前后端）
+.github/  CI 工作流
 ```
 
 ## 当前状态
 
-这是可交互的功能 Demo。多选音符、撤销/重做、完整音频波形编辑、多供应商 Provider Adapter 和云端项目存储仍属于后续路线。
+这是可交互的功能 Demo，已有单元测试与 CI 兜底。多选音符、撤销/重做、完整音频波形编辑、多供应商 Provider Adapter 和云端项目存储仍属于后续路线。
