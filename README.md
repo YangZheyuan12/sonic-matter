@@ -88,6 +88,12 @@ npm run build       # web 生产构建
 
 测试用 Node 自带的 `node:test`，不引入额外依赖，离线也能跑。推送后由 `.github/workflows/ci.yml` 在 CI 里跑同一套命令。
 
+## 接口与错误约定
+
+前后端只通过 `Project` 数据结构和 9 个 `/api/*` 接口耦合，接口清单见 `server/README.md`。
+所有失败响应都是统一信封 `{ error, code, status, retryable, detail?, requestId }`，前端据此给出中文提示、重试按钮和取消能力；`X-Request-Id` 可以和服务端日志对上。
+协作与提交约定见 `AGENTS.md`。
+
 ## 项目结构
 
 ```text

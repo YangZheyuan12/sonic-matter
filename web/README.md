@@ -38,6 +38,17 @@ src/
 public/soundfonts/       # 可选 WAV 采样；缺失时自动回退浏览器合成器
 ```
 
+## 请求层与任务状态
+
+- 所有后端请求都走 `src/api/client.ts`，组件里不要再直接写 `fetch`：
+  - 默认 90 秒超时（`DEFAULT_TIMEOUT_MS`），音频 / 音乐生成这类慢接口用 `LONG_TIMEOUT_MS`（240 秒）；
+  - 失败统一抛 `ApiError`：`message` 是可以直接展示的中文文案，`code` / `retryable` / `requestId` 保留细节；
+  - 后端错误信封 `{ error, code, status, retryable, detail, requestId }` 在这里被解析；
+  - 导出（MIDI 等）用 `apiFetchBlob`。
+- `src/hooks/useAsyncTask.ts` 把「进行中 / 已取消 / 失败可重试 / 用了多久」收成一个钩子。
+  页面底部的状态条就是它的视图：运行中显示已用时间和「取消」按钮，失败时显示中文原因和「重试」按钮。
+- 取消是真的取消：`AbortController` 会一路传到后端，后端再 abort 掉上游请求。
+
 ## 测试
 
 测试与源码同目录（`src/project/model.test.ts`、`src/audio/sfxPreview.test.ts`），用 Node 自带的 `node:test` + Node 原生 TypeScript 支持运行，不引入 vitest / jsdom：

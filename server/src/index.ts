@@ -1,13 +1,22 @@
 import 'dotenv/config'
 import cors from 'cors'
 import express from 'express'
-import type { NextFunction, Request, Response } from 'express'
 import OpenAI from 'openai'
 import { z } from 'zod'
 import { mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import crypto from 'node:crypto'
 import { buildMidiFile, MidiExportError } from './midi.ts'
+import { badRequest, isAbortError, isClientGone, providerNotConfigured, toAppError, zodDetail } from './errors.ts'
+import { logger } from './logger.ts'
+import {
+  agentTimeoutMs,
+  asyncHandler,
+  errorHandler,
+  fetchWithRetry,
+  notFoundHandler,
+  requestContext,
+} from './http.ts'
 
 const app = express()
 const port = Number(process.env.PORT ?? 8787)
@@ -17,16 +26,10 @@ const envProtocol = process.env.OPENAI_PROTOCOL === 'chat-completions' ? 'chat-c
 const generatedDir = path.resolve(process.cwd(), 'generated')
 const replicateModel = process.env.MUSIC_REPLICATE_MODEL ?? 'meta/musicgen'
 
+app.use(requestContext())
 app.use(cors())
 app.use(express.json({ limit: '2mb' }))
-app.use((error: unknown, _req: Request, res: Response, next: NextFunction) => {
-  if (error instanceof SyntaxError && 'body' in error) {
-    return res.status(400).json({ error: '请求体不是有效 JSON，请检查 JSON 格式。' })
-  }
-  return next(error)
-})
 app.use('/generated', express.static(generatedDir))
-
 const agentConfigSchema = z.object({
   baseUrl: z.string().trim().url().optional(),
   apiKey: z.string().trim().max(500).optional(),
@@ -94,26 +97,43 @@ const musicPlanJsonSchema = { type: 'object', additionalProperties: false, prope
     notes: { type: 'array', items: { type: 'object', additionalProperties: false, properties: { id: { type: 'string' }, pitch: { type: 'integer' }, start: { type: 'number' }, duration: { type: 'number' }, velocity: { type: 'number' } }, required: ['id', 'pitch', 'start', 'duration', 'velocity'] } },
   }, required: ['id', 'name', 'instrument', 'color', 'notes'] } },
 }, required: ['title', 'tempo', 'key', 'duration', 'tracks'] } as const
-
 function resolveAgentConfig(input?: AgentConfig): AgentConfig {
   return { baseUrl: input?.baseUrl || envBaseUrl, apiKey: input?.apiKey || process.env.OPENAI_API_KEY || '', model: input?.model || envModel, protocol: input?.protocol || envProtocol }
 }
-function createClient(config: AgentConfig) { if (!config.apiKey) throw new Error('OPENAI_API_KEY_MISSING'); return new OpenAI({ apiKey: config.apiKey, baseURL: config.baseUrl }) }
 
-async function structuredResponse<T>(input: string, name: string, schema: Record<string, unknown>, parser: z.ZodType<T>, config: AgentConfig): Promise<T> {
-  const client = createClient(config)
-  if (config.protocol === 'chat-completions') {
-    const completion = await client.chat.completions.create({ model: config.model!, messages: [{ role: 'system', content: '你是一个结构化输出 Agent。只输出符合 JSON Schema 的 JSON，不要 Markdown。' }, { role: 'user', content: input }], response_format: { type: 'json_schema', json_schema: { name, strict: true, schema } } })
-    const text = completion.choices[0]?.message?.content
-    if (!text) throw new Error('OPENAI_EMPTY_OUTPUT')
-    return parser.parse(JSON.parse(text))
-  }
-  const response = await client.responses.create({ model: config.model!, input, text: { format: { type: 'json_schema', name, strict: true, schema } } })
-  if (response.status === 'incomplete') throw new Error(`OPENAI_INCOMPLETE_${response.incomplete_details?.reason ?? 'unknown'}`)
-  if (!response.output_text) throw new Error('OPENAI_EMPTY_OUTPUT')
-  return parser.parse(JSON.parse(response.output_text))
+function createClient(config: AgentConfig) {
+  if (!config.apiKey) throw providerNotConfigured('未配置 Agent API Key，无法执行真实 Agent 请求。')
+  // maxRetries：只让 SDK 处理瞬时网络抖动；timeout：别让前端无限等下去。
+  return new OpenAI({ apiKey: config.apiKey, baseURL: config.baseUrl, timeout: agentTimeoutMs, maxRetries: 2 })
 }
 
+/** SDK 的超时/中止错误统一成 PROVIDER_TIMEOUT 哨兵，由 errors.ts 翻成 504。 */
+function rethrowAgentError(error: unknown): never {
+  if (isAbortError(error)) throw new Error('PROVIDER_TIMEOUT')
+  if (error instanceof Error && /timeout|timed out|aborted/i.test(`${error.name} ${error.message}`)) {
+    throw new Error('PROVIDER_TIMEOUT')
+  }
+  throw error
+}
+
+async function structuredResponse<T>(input: string, name: string, schema: Record<string, unknown>, parser: z.ZodType<T>, config: AgentConfig, signal?: AbortSignal): Promise<T> {
+  const client = createClient(config)
+  const requestOptions = { signal, timeout: agentTimeoutMs }
+  try {
+    if (config.protocol === 'chat-completions') {
+      const completion = await client.chat.completions.create({ model: config.model!, messages: [{ role: 'system', content: '你是一个结构化输出 Agent。只输出符合 JSON Schema 的 JSON，不要 Markdown。' }, { role: 'user', content: input }], response_format: { type: 'json_schema', json_schema: { name, strict: true, schema } } }, requestOptions)
+      const text = completion.choices[0]?.message?.content
+      if (!text) throw new Error('OPENAI_EMPTY_OUTPUT')
+      return parser.parse(JSON.parse(text))
+    }
+    const response = await client.responses.create({ model: config.model!, input, text: { format: { type: 'json_schema', name, strict: true, schema } } }, requestOptions)
+    if (response.status === 'incomplete') throw new Error(`OPENAI_INCOMPLETE_${response.incomplete_details?.reason ?? 'unknown'}`)
+    if (!response.output_text) throw new Error('OPENAI_EMPTY_OUTPUT')
+    return parser.parse(JSON.parse(response.output_text))
+  } catch (error) {
+    return rethrowAgentError(error)
+  }
+}
 function fallbackConcept(concept: string): z.infer<typeof conceptResponseSchema> {
   return { concept, interpretations: [
     { id: 'physical', title: `物理${concept}`, summary: `从可观察的形态、材质和运动理解${concept}。`, thesis: `${concept}的重量与尺度可以被听见。`, story_arc: [{ start: 0, end: 3, title: '表面', meaning: '先听见它最直观的轮廓。', musical_role: '稀疏高频、开放音程' }, { start: 3, end: 7, title: '内部', meaning: '进入材质内部，感受隐藏的重量。', musical_role: '低频长音、缓慢叠层' }, { start: 7, end: 10, title: '变化', meaning: '让形态在最后一刻发生变化。', musical_role: '颗粒化碎片、宽阔尾响' }], music_mapping: { tempo: 58, key: 'D minor', density: .28, brightness: .68, tension: .5, instruments: ['glass_bell', 'cello', 'sub_bass'] } },
@@ -127,28 +147,15 @@ function fallbackMusicPlan(project: z.infer<typeof projectSchema>): z.infer<type
   return { title: `${project.title} · 结构化草案`, tempo: project.tempo, key: project.key, duration: Math.min(30, project.duration ?? 10), tracks }
 }
 function fallbackSound(description: string, mixer: z.infer<typeof soundMixerSchema>): z.infer<typeof soundPlanSchema> { return { title: 'Semantic Sound Sketch', prompt: `${description}; density ${mixer.density}%; brightness ${mixer.brightness}%; spaciousness ${mixer.space}%; compactness ${mixer.compact}%`, duration_seconds: mixer.length, texture: mixer.brightness > 60 ? 'bright granular transient' : 'dark granular transient', envelope: mixer.compact > 60 ? 'tight attack, short decay' : 'soft attack, long tail', space: mixer.space > 60 ? 'wide underwater reverb' : 'near-field dry room', events: [{ time: 0, event: 'distant onset' }, { time: Math.max(.1, mixer.length * .42), event: 'textural rupture' }, { time: Math.max(.2, mixer.length * .78), event: 'resonant tail' }] } }
-
 function requiredSecret(name: string) {
   const value = process.env[name]
   if (!value) throw new Error(`${name}_MISSING`)
   return value
 }
 
-async function fetchWithTimeout(input: string | URL, init: RequestInit = {}, timeoutMs = 180_000) {
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), timeoutMs)
-  try {
-    return await fetch(input, { ...init, signal: controller.signal })
-  } catch (error) {
-    if (error instanceof Error && error.name === 'AbortError') throw new Error('PROVIDER_TIMEOUT')
-    throw error
-  } finally {
-    clearTimeout(timer)
-  }
-}
-
-async function downloadGeneratedAudio(url: string, extension: string) {
-  const response = await fetchWithTimeout(url, {}, 120_000)
+/** 取音频二进制。上游可能返回 5xx，交给 fetchWithRetry 重试。 */
+async function downloadGeneratedAudio(url: string, extension: string, signal?: AbortSignal) {
+  const response = await fetchWithRetry(url, {}, { label: '音频下载', signal })
   if (!response.ok) throw new Error(`AUDIO_DOWNLOAD_${response.status}`)
   const buffer = Buffer.from(await response.arrayBuffer())
   await mkdir(generatedDir, { recursive: true })
@@ -157,39 +164,39 @@ async function downloadGeneratedAudio(url: string, extension: string) {
   return { filename, url: `/generated/${filename}` }
 }
 
-async function generateWithReplicate(prompt: string, durationSeconds: number, config?: { baseUrl?: string; apiKey?: string; model?: string }) {
+async function generateWithReplicate(prompt: string, durationSeconds: number, config?: { baseUrl?: string; apiKey?: string; model?: string }, signal?: AbortSignal) {
   const token = config?.apiKey || requiredSecret('REPLICATE_API_TOKEN')
   const model = config?.model || replicateModel
   const modelPath = model.includes('/') ? `/models/${model}/predictions` : '/predictions'
   const baseUrl = (config?.baseUrl || 'https://api.replicate.com/v1').replace(/\/$/, '')
-  const response = await fetchWithTimeout(`${baseUrl}${modelPath}`, {
+  const response = await fetchWithRetry(`${baseUrl}${modelPath}`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ ...(model.includes('/') ? {} : { version: model }), input: { prompt, duration: durationSeconds } }),
-  })
+  }, { label: '音乐生成任务创建', signal })
   if (!response.ok) throw new Error(`REPLICATE_CREATE_${response.status}`)
   let prediction = await response.json() as { id: string; status: string; output?: string | string[]; error?: string }
   const deadline = Date.now() + 180_000
   while (['starting', 'processing'].includes(prediction.status) && Date.now() < deadline) {
     await new Promise(resolve => setTimeout(resolve, 2500))
-    const poll = await fetchWithTimeout(`${baseUrl}/predictions/${prediction.id}`, { headers: { Authorization: `Bearer ${token}` } })
+    const poll = await fetchWithRetry(`${baseUrl}/predictions/${prediction.id}`, { headers: { Authorization: `Bearer ${token}` } }, { label: '音乐生成任务轮询', signal })
     if (!poll.ok) throw new Error(`REPLICATE_POLL_${poll.status}`)
     prediction = await poll.json() as typeof prediction
   }
   if (prediction.status !== 'succeeded') throw new Error(prediction.error ?? `REPLICATE_${prediction.status}`)
   const output = Array.isArray(prediction.output) ? prediction.output[0] : prediction.output
   if (!output) throw new Error('REPLICATE_EMPTY_OUTPUT')
-  return downloadGeneratedAudio(output, 'wav')
+  return downloadGeneratedAudio(output, 'wav', signal)
 }
 
-async function generateWithElevenLabs(description: string, mixer: z.infer<typeof soundMixerSchema>, config?: { baseUrl?: string; apiKey?: string; model?: string }) {
+async function generateWithElevenLabs(description: string, mixer: z.infer<typeof soundMixerSchema>, config?: { baseUrl?: string; apiKey?: string; model?: string }, signal?: AbortSignal) {
   const apiKey = config?.apiKey || requiredSecret('ELEVENLABS_API_KEY')
   const baseUrl = (config?.baseUrl || 'https://api.elevenlabs.io/v1').replace(/\/$/, '')
-  const response = await fetchWithTimeout(`${baseUrl}/sound-generation`, {
+  const response = await fetchWithRetry(`${baseUrl}/sound-generation`, {
     method: 'POST',
     headers: { 'xi-api-key': apiKey, 'Content-Type': 'application/json' },
     body: JSON.stringify({ text: `${description}. Duration ${mixer.length} seconds. Density ${mixer.density} percent. Brightness ${mixer.brightness} percent. Spaciousness ${mixer.space} percent. Compactness ${mixer.compact} percent.` }),
-  })
+  }, { label: '音效生成', signal })
   if (!response.ok) throw new Error(`ELEVENLABS_GENERATE_${response.status}`)
   const buffer = Buffer.from(await response.arrayBuffer())
   await mkdir(generatedDir, { recursive: true })
@@ -197,19 +204,57 @@ async function generateWithElevenLabs(description: string, mixer: z.infer<typeof
   await writeFile(path.join(generatedDir, filename), buffer)
   return { filename, url: `/generated/${filename}` }
 }
-
 app.get('/api/health', (_req, res) => { const config = resolveAgentConfig(); res.json({ ok: true, agent: Boolean(config.apiKey), model: config.model, baseUrl: config.baseUrl, protocol: config.protocol }) })
-app.post('/api/agent/test', async (req, res) => { const parsed = requestWithAgentSchema.safeParse(req.body); if (!parsed.success) return res.status(400).json({ error: 'Agent 配置格式不正确。' }); const config = resolveAgentConfig(parsed.data.agent); try { const result = await structuredResponse('请回复 ok，并说明连接成功。', 'agent_connection_test', pingJsonSchema, z.object({ ok: z.boolean(), message: z.string() }), config); return res.json({ ...result, model: config.model, baseUrl: config.baseUrl, protocol: config.protocol }) } catch (error) { const detail = error instanceof Error ? error.message : 'unknown_error'; return res.status(502).json({ error: '连接测试失败。', detail }) } })
 
-app.post('/api/concept/interpret', async (req, res) => { const parsed = conceptInputSchema.safeParse(req.body); if (!parsed.success) return res.status(400).json({ error: 'concept 必须是 1-80 个字符。' }); const { concept, agent } = parsed.data; const config = resolveAgentConfig(agent); try { const result = await structuredResponse(['你是“万物声谱”的概念作曲 Agent。', '请把用户输入的抽象或具象词语，分别从物理、心理、生态/社会三个视角解释，并为每个视角设计一个 10 秒的音乐叙事。', '输出必须严格符合 JSON Schema；不要输出 Markdown。', `用户词语：${concept}`].join('\n'), 'concept_interpretation', conceptJsonSchema, conceptResponseSchema, config); return res.json({ ...result, source: 'agent' }) } catch (error) { const message = error instanceof Error ? error.message : 'unknown_error'; if (message === 'OPENAI_API_KEY_MISSING') return res.json({ ...fallbackConcept(concept), source: 'fallback', warning: '未配置 API Key，当前使用本地 fallback。' }); console.error('[concept/interpret]', error); return res.status(502).json({ error: 'Agent 暂时不可用，请检查 Base URL、API Key、协议或模型。', detail: message }) } })
+app.post('/api/agent/test', asyncHandler(async (req, res) => {
+  const parsed = requestWithAgentSchema.safeParse(req.body)
+  if (!parsed.success) throw badRequest('Agent 配置格式不正确。', zodDetail(parsed.error))
+  const config = resolveAgentConfig(parsed.data.agent)
+  const result = await structuredResponse('请回复 ok，并说明连接成功。', 'agent_connection_test', pingJsonSchema, z.object({ ok: z.boolean(), message: z.string() }), config, req.abortSignal)
+  return res.json({ ...result, model: config.model, baseUrl: config.baseUrl, protocol: config.protocol })
+}))
 
-app.post('/api/project/edit', async (req, res) => { const parsed = projectEditSchema.safeParse(req.body); if (!parsed.success) return res.status(400).json({ error: '工程或 Agent 指令格式不正确。' }); const { project, instruction, agent } = parsed.data; try { const result = await structuredResponse(['你是音乐工程编辑 Agent。只根据用户指令提出安全、可执行的工程操作。', '优先返回 update_project、update_track 或 add_track；不要删除轨道，不要生成不可编辑的二进制音频。', `当前工程 JSON：${JSON.stringify(project)}`, `用户指令：${instruction}`].join('\n'), 'project_edit_operations', editJsonSchema, editResponseSchema, resolveAgentConfig(agent)); return res.json({ ...result, source: 'agent' }) } catch (error) { const message = error instanceof Error ? error.message : 'unknown_error'; if (message === 'OPENAI_API_KEY_MISSING') return res.status(503).json({ error: '未配置 API Key，无法执行真正的 Agent 工程编辑。' }); console.error('[project/edit]', error); return res.status(502).json({ error: 'Agent 暂时不可用，请稍后再试。', detail: message }) } })
+/** 没配 Key 时用本地 fallback 顶上，其它错误照常抛出。 */
+const isNotConfigured = (error: unknown) => toAppError(error).code === 'provider_not_configured'
 
-app.post('/api/sfx/plan', async (req, res) => { const parsed = soundPlanInputSchema.safeParse(req.body); if (!parsed.success) return res.status(400).json({ error: '音效描述或调音台参数不正确。' }); const { description, mixer, agent } = parsed.data; try { const result = await structuredResponse(['你是音效设计 Agent。请把声音描述和调音台参数转换为一个可交给音效生成模型的结构化声音计划。', '不要返回音频二进制，只返回 JSON。', `描述：${description}`, `调音台：${JSON.stringify(mixer)}`].join('\n'), 'sound_design_plan', soundJsonSchema, soundPlanSchema, resolveAgentConfig(agent)); return res.json({ ...result, source: 'agent' }) } catch (error) { const message = error instanceof Error ? error.message : 'unknown_error'; if (message === 'OPENAI_API_KEY_MISSING') return res.json({ ...fallbackSound(description, mixer), source: 'fallback', warning: '未配置 API Key，当前使用本地声音计划。' }); console.error('[sfx/plan]', error); return res.status(502).json({ error: '音效 Agent 暂时不可用。', detail: message }) } })
+app.post('/api/concept/interpret', asyncHandler(async (req, res) => {
+  const parsed = conceptInputSchema.safeParse(req.body)
+  if (!parsed.success) throw badRequest('concept 必须是 1-80 个字符。', zodDetail(parsed.error))
+  const { concept, agent } = parsed.data
+  const config = resolveAgentConfig(agent)
+  try {
+    const result = await structuredResponse(['你是“万物声谱”的概念作曲 Agent。', '请把用户输入的抽象或具象词语，分别从物理、心理、生态/社会三个视角解释，并为每个视角设计一个 10 秒的音乐叙事。', '输出必须严格符合 JSON Schema；不要输出 Markdown。', `用户词语：${concept}`].join('\n'), 'concept_interpretation', conceptJsonSchema, conceptResponseSchema, config, req.abortSignal)
+    return res.json({ ...result, source: 'agent' })
+  } catch (error) {
+    if (isNotConfigured(error)) return res.json({ ...fallbackConcept(concept), source: 'fallback', warning: '未配置 API Key，当前使用本地 fallback。' })
+    throw error
+  }
+}))
 
-app.post('/api/music/plan', async (req, res) => {
+app.post('/api/project/edit', asyncHandler(async (req, res) => {
+  const parsed = projectEditSchema.safeParse(req.body)
+  if (!parsed.success) throw badRequest('工程或 Agent 指令格式不正确。', zodDetail(parsed.error))
+  const { project, instruction, agent } = parsed.data
+  const result = await structuredResponse(['你是音乐工程编辑 Agent。只根据用户指令提出安全、可执行的工程操作。', '优先返回 update_project、update_track 或 add_track；不要删除轨道，不要生成不可编辑的二进制音频。', `当前工程 JSON：${JSON.stringify(project)}`, `用户指令：${instruction}`].join('\n'), 'project_edit_operations', editJsonSchema, editResponseSchema, resolveAgentConfig(agent), req.abortSignal)
+  return res.json({ ...result, source: 'agent' })
+}))
+
+app.post('/api/sfx/plan', asyncHandler(async (req, res) => {
+  const parsed = soundPlanInputSchema.safeParse(req.body)
+  if (!parsed.success) throw badRequest('音效描述或调音台参数不正确。', zodDetail(parsed.error))
+  const { description, mixer, agent } = parsed.data
+  try {
+    const result = await structuredResponse(['你是音效设计 Agent。请把声音描述和调音台参数转换为一个可交给音效生成模型的结构化声音计划。', '不要返回音频二进制，只返回 JSON。', `描述：${description}`, `调音台：${JSON.stringify(mixer)}`].join('\n'), 'sound_design_plan', soundJsonSchema, soundPlanSchema, resolveAgentConfig(agent), req.abortSignal)
+    return res.json({ ...result, source: 'agent' })
+  } catch (error) {
+    if (isNotConfigured(error)) return res.json({ ...fallbackSound(description, mixer), source: 'fallback', warning: '未配置 API Key，当前使用本地声音计划。' })
+    throw error
+  }
+}))
+
+app.post('/api/music/plan', asyncHandler(async (req, res) => {
   const parsed = musicPlanInputSchema.safeParse(req.body)
-  if (!parsed.success) return res.status(400).json({ error: '音乐工程描述或当前 Project 数据不正确。' })
+  if (!parsed.success) throw badRequest('音乐工程描述或当前 Project 数据不正确。', zodDetail(parsed.error))
   const { project, prompt, agent } = parsed.data
   try {
     const result = await structuredResponse([
@@ -219,61 +264,81 @@ app.post('/api/music/plan', async (req, res) => {
       '请保持音高在 MIDI 0-127，时间不超过 duration，避免不必要的密集重叠。和弦请用同一时间起始的多个音符表达。',
       `当前工程：${JSON.stringify(project)}`,
       `用户意图：${prompt}`,
-    ].join('\n'), 'music_project_plan', musicPlanJsonSchema, musicPlanSchema, resolveAgentConfig(agent))
+    ].join('\n'), 'music_project_plan', musicPlanJsonSchema, musicPlanSchema, resolveAgentConfig(agent), req.abortSignal)
     return res.json({ ...result, source: 'agent' })
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'unknown_error'
-    if (message === 'OPENAI_API_KEY_MISSING') return res.json({ ...fallbackMusicPlan(project), source: 'fallback', warning: '未配置 Agent API Key，当前沿用现有 MIDI 结构作为可编辑草案。' })
-    console.error('[music/plan]', error)
-    return res.status(502).json({ error: '结构化音乐 Agent 暂时不可用。', detail: message })
+    if (isNotConfigured(error)) return res.json({ ...fallbackMusicPlan(project), source: 'fallback', warning: '未配置 Agent API Key，当前沿用现有 MIDI 结构作为可编辑草案。' })
+    throw error
   }
-})
+}))
 
-app.post('/api/music/generate', async (req, res) => {
+app.post('/api/music/generate', asyncHandler(async (req, res) => {
   const parsed = musicGenerateInputSchema.safeParse(req.body)
-  if (!parsed.success) return res.status(400).json({ error: '音乐描述或时长不正确。' })
-  try {
-    const generated = await generateWithReplicate(parsed.data.prompt, parsed.data.duration_seconds, parsed.data.music)
-    return res.json({ ...generated, provider: 'replicate', model: parsed.data.music?.model || replicateModel, source: 'audio-model' })
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'unknown_error'
-    if (message === 'REPLICATE_API_TOKEN_MISSING') return res.status(503).json({ error: '未配置 REPLICATE_API_TOKEN，无法生成真实音乐。' })
-    console.error('[music/generate]', error)
-    return res.status(502).json({ error: '音乐生成服务暂时不可用。', detail: message })
-  }
-})
+  if (!parsed.success) throw badRequest('音乐描述或时长不正确。', zodDetail(parsed.error))
+  const generated = await generateWithReplicate(parsed.data.prompt, parsed.data.duration_seconds, parsed.data.music, req.abortSignal)
+  return res.json({ ...generated, provider: 'replicate', model: parsed.data.music?.model || replicateModel, source: 'audio-model' })
+}))
 
-app.post('/api/sfx/generate', async (req, res) => {
+app.post('/api/sfx/generate', asyncHandler(async (req, res) => {
   const parsed = soundGenerateInputSchema.safeParse(req.body)
-  if (!parsed.success) return res.status(400).json({ error: '音效描述或调音台参数不正确。' })
-  try {
-    const generated = await generateWithElevenLabs(parsed.data.description, parsed.data.mixer, parsed.data.sfx)
-    return res.json({ ...generated, provider: 'elevenlabs', source: 'audio-model' })
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'unknown_error'
-    if (message === 'ELEVENLABS_API_KEY_MISSING') return res.status(503).json({ error: '未配置 ELEVENLABS_API_KEY，无法生成真实音效。' })
-    console.error('[sfx/generate]', error)
-    return res.status(502).json({ error: '音效生成服务暂时不可用。', detail: message })
-  }
-})
+  if (!parsed.success) throw badRequest('音效描述或调音台参数不正确。', zodDetail(parsed.error))
+  const generated = await generateWithElevenLabs(parsed.data.description, parsed.data.mixer, parsed.data.sfx, req.abortSignal)
+  return res.json({ ...generated, provider: 'elevenlabs', source: 'audio-model' })
+}))
 
-app.post('/api/export/midi', async (req, res) => {
+app.post('/api/export/midi', asyncHandler(async (req, res) => {
   const parsed = projectSchema.safeParse(req.body?.project)
-  if (!parsed.success) return res.status(400).json({ error: 'Project 数据不正确。' })
+  if (!parsed.success) throw badRequest('Project 数据不正确。', zodDetail(parsed.error))
   const project = parsed.data
   const midiTracks = project.tracks.filter(track => track.kind === 'midi').map(track => ({ name: track.name, notes: track.notes ?? [] }))
-  if (!midiTracks.length) return res.status(400).json({ error: '当前工程没有 MIDI 轨道。' })
+  if (!midiTracks.length) throw badRequest('当前工程没有 MIDI 轨道。')
   try {
     const data = buildMidiFile(project.tempo, midiTracks)
     res.setHeader('Content-Type', 'audio/midi')
     res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(project.title)}.mid"`)
     return res.send(data)
   } catch (error) {
-    if (error instanceof MidiExportError) return res.status(400).json({ error: error.message })
+    if (error instanceof MidiExportError) throw badRequest(error.message)
     throw error
   }
+}))
+
+app.use(notFoundHandler)
+app.use(errorHandler)
+
+const server = app.listen(port, () => {
+  const config = resolveAgentConfig()
+  logger.info('Agent server 已启动', {
+    url: `http://localhost:${port}`,
+    agent: Boolean(config.apiKey),
+    model: config.model,
+    protocol: config.protocol,
+  })
 })
 
-app.listen(port, () => { const config = resolveAgentConfig(); console.log(`Audio Agent server listening on http://localhost:${port} (agent=${Boolean(config.apiKey)}, model=${config.model}, protocol=${config.protocol})`) })
+server.on('error', (error: NodeJS.ErrnoException) => {
+  if (error.code === 'EADDRINUSE') {
+    logger.error(`端口 ${port} 已被占用：可能是上一次的服务没有退出。可以设置 PORT 换一个端口，或先结束占用进程。`, { code: error.code })
+  } else {
+    logger.error('服务器启动失败', { code: error.code, error: error.message })
+  }
+  process.exit(1)
+})
 
+function shutdown(signal: string) {
+  logger.info('收到退出信号，正在关闭服务', { signal })
+  const force = setTimeout(() => process.exit(0), 5_000)
+  force.unref?.()
+  server.close(() => {
+    logger.info('服务已关闭')
+    process.exit(0)
+  })
+}
 
+process.on('SIGINT', () => shutdown('SIGINT'))
+process.on('SIGTERM', () => shutdown('SIGTERM'))
+process.on('unhandledRejection', (reason: unknown) => {
+  const error = toAppError(reason)
+  if (isClientGone(error)) return
+  logger.error('未处理的 Promise 拒绝', { code: error.code, detail: error.detail })
+})
