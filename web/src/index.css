@@ -152,3 +152,11 @@
 .roll-inspector-actions{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
 :root[data-theme="light"] .roll-action,:root[data-theme="system"] .roll-action{background:rgba(31,37,61,.06);color:#202230}
 @media(max-width:900px){.roll-actions{margin-left:0;width:100%}.roll-status{flex-direction:column;gap:4px}.roll-status span:last-child{text-align:left}}
+
+/* 工程级撤销 / 重做 */
+.history-bar{display:flex;flex-wrap:wrap;align-items:center;gap:9px;margin:-8px 0 16px;padding:9px 12px;border:1px solid var(--line);border-radius:8px;background:rgba(10,12,31,.5)}
+.history-bar button{white-space:nowrap}
+.history-bar button:disabled{opacity:.42;cursor:not-allowed}
+.history-status{margin-left:auto;color:var(--muted);font:9px ui-monospace,"SFMono-Regular",Consolas,monospace;letter-spacing:.04em}
+:root[data-theme="light"] .history-bar,:root[data-theme="system"] .history-bar{background:rgba(255,255,255,.62)}
+@media(max-width:900px){.history-status{margin-left:0;width:100%}}

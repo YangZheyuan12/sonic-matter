@@ -46,7 +46,7 @@ const capturePointer = (element: Element, pointerId: number) => { try { element.
 /** 框选判定的最小拖动距离（像素），低于它视为单击新增。 */
 const MARQUEE_THRESHOLD = 4
 
-export default function PianoRoll({ project, playhead = 0, updateTrack }: { project: Project; playhead?: number; updateTrack: (id: string, patch: Partial<Track>) => void }) {
+export default function PianoRoll({ project, playhead = 0, updateTrack }: { project: Project; playhead?: number; updateTrack: (id: string, patch: Partial<Track>, label?: string) => void }) {
   const midiTracks = project.tracks.filter(track => track.kind === 'midi')
   const [trackId, setTrackId] = useState(midiTracks[0]?.id ?? '')
   const [selectedIds, setSelectedIds] = useState<string[]>([])
@@ -67,7 +67,7 @@ export default function PianoRoll({ project, playhead = 0, updateTrack }: { proj
   const summary = summarizeSelection(notes, selection)
   const soleNote = summary && summary.count === 1 ? notes.find(item => item.id === selection[0]) : undefined
 
-  const write = (next: Note[]) => { if (track) updateTrack(track.id, { notes: sortNotes(next) }) }
+  const write = (next: Note[]) => { if (track) updateTrack(track.id, { notes: sortNotes(next) }, '编辑音符') }
   const applyPatches = (patches: Note[]) => { if (patches.length) write(mergeNotes(notes, patches)) }
   const focusGrid = () => gridRef.current?.focus({ preventScroll: true })
   const gridRect = () => {
