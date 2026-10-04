@@ -160,3 +160,38 @@
 .history-status{margin-left:auto;color:var(--muted);font:9px ui-monospace,"SFMono-Regular",Consolas,monospace;letter-spacing:.04em}
 :root[data-theme="light"] .history-bar,:root[data-theme="system"] .history-bar{background:rgba(255,255,255,.62)}
 @media(max-width:900px){.history-status{margin-left:0;width:100%}}
+
+/* 轨道管理：乐器切换、排序、复制、删除、重命名 */
+.track-list{min-width:300px}
+.track.active{border-color:rgba(125,211,252,.5);background:linear-gradient(180deg,rgba(125,211,252,.09),transparent 70%)}
+.track.muted{opacity:.6}
+.track-dot{width:8px;height:30px;padding:0;border:0;border-radius:2px;cursor:pointer}
+.track-heading .track-title{min-width:0}
+.track-name{max-width:100%;padding:0;border:0;background:transparent;color:#fff;font-size:12px;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.track-name:hover{color:var(--cyan)}
+.track-rename{width:100%;padding:3px 6px;border:1px solid rgba(125,211,252,.5);border-radius:4px;background:rgba(8,10,26,.9);color:#fff;font-size:12px}
+.track-instrument{display:grid;grid-template-columns:32px minmax(0,1fr);align-items:center;gap:6px;margin-top:9px}
+.track-instrument span{color:var(--muted);font-size:8px;white-space:nowrap}
+.track-instrument select{min-width:0;padding:4px 6px;border:1px solid var(--line);border-radius:4px;background:rgba(8,10,26,.72);color:#e6e7ff;font-size:10px}
+.track-actions{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:6px;margin-top:10px}
+.track-action{padding:5px 0;border:1px solid var(--line);border-radius:4px;background:rgba(255,255,255,.04);color:#d9dcf8;font-size:9px}
+.track-action:hover:not(:disabled){border-color:rgba(125,211,252,.5);color:#fff}
+.track-action:disabled{opacity:.34;cursor:not-allowed}
+.track-action.danger:hover:not(:disabled){border-color:rgba(251,113,133,.65);color:#ffd5dd}
+.track-create{display:grid;gap:8px;margin-top:14px;padding:12px;border:1px solid rgba(125,211,252,.3);border-radius:6px;background:rgba(9,12,30,.72)}
+.track-create label{display:grid;grid-template-columns:32px minmax(0,1fr);align-items:center;gap:6px}
+.track-create span{color:var(--muted);font-size:8px;white-space:nowrap}
+.track-create select,.track-create input{min-width:0;padding:5px 7px;border:1px solid var(--line);border-radius:4px;background:rgba(8,10,26,.72);color:#e6e7ff;font-size:10px}
+.track-create-actions{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center}
+.track-create-actions button{margin:0;padding:7px 12px;border-radius:4px;font-size:10px}
+.track-add{display:block;width:100%;margin-top:12px;text-align:left}
+.track-list .hint{margin:14px 0 0}
+.lane.dim{opacity:.42}
+.lane.active>label{color:var(--cyan)}
+:root[data-theme="light"] .track-name{color:#1d2030}
+:root[data-theme="light"] .track-instrument select,:root[data-theme="light"] .track-create select,:root[data-theme="light"] .track-create input{background:#fff;color:#202230}
+:root[data-theme="light"] .track-action{color:#3a3f55}
+:root[data-theme="light"] .track-create{background:rgba(255,255,255,.72)}
+:root[data-theme="light"] .track-rename{background:#fff;color:#202230}
+@media(prefers-color-scheme:light){:root[data-theme="system"] .track-name{color:#1d2030}:root[data-theme="system"] .track-instrument select,:root[data-theme="system"] .track-create select,:root[data-theme="system"] .track-create input,:root[data-theme="system"] .track-rename{background:#fff;color:#202230}}
+@media(max-width:620px){.track-actions{grid-template-columns:repeat(3,minmax(0,1fr))}.track-instrument{grid-template-columns:1fr}}

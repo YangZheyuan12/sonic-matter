@@ -46,9 +46,8 @@ const capturePointer = (element: Element, pointerId: number) => { try { element.
 /** 框选判定的最小拖动距离（像素），低于它视为单击新增。 */
 const MARQUEE_THRESHOLD = 4
 
-export default function PianoRoll({ project, playhead = 0, updateTrack }: { project: Project; playhead?: number; updateTrack: (id: string, patch: Partial<Track>, label?: string) => void }) {
+export default function PianoRoll({ project, playhead = 0, trackId, onTrackChange, updateTrack }: { project: Project; playhead?: number; trackId: string; onTrackChange: (id: string) => void; updateTrack: (id: string, patch: Partial<Track>, label?: string) => void }) {
   const midiTracks = project.tracks.filter(track => track.kind === 'midi')
-  const [trackId, setTrackId] = useState(midiTracks[0]?.id ?? '')
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [snapChoice, setSnapChoice] = useState<SnapChoice>('1/8')
   const [drag, setDrag] = useState<Drag | null>(null)
@@ -222,7 +221,7 @@ export default function PianoRoll({ project, playhead = 0, updateTrack }: { proj
       <span>DAW EDITOR · CLICK ADD · DRAG MOVE · SHIFT SELECT · MARQUEE</span>
     </div>
     <div className="piano-roll-toolbar">
-      <select aria-label="编辑 MIDI 轨道" value={track?.id ?? ''} onChange={event => { setTrackId(event.target.value); setSelectedIds([]) }}>{midiTracks.map(item => <option key={item.id} value={item.id}>{item.name} · {item.instrument}</option>)}</select>
+      <select aria-label="编辑 MIDI 轨道" value={track?.id ?? ''} onChange={event => { onTrackChange(event.target.value); setSelectedIds([]) }}>{midiTracks.map(item => <option key={item.id} value={item.id}>{item.name} · {item.instrument}</option>)}</select>
       <label className="quantize-control">
         <span>吸附</span>
         <select aria-label="钢琴卷帘吸附网格" value={snapChoice} onChange={event => setSnapChoice(event.target.value as SnapChoice)}>{SNAP_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select>
