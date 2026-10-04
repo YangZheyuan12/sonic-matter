@@ -192,14 +192,18 @@ async function decodeClipSource(context: BaseAudioContext, source: string): Prom
   }
 }
 
+/** 把一个素材解码成 AudioBuffer（量时长、画波形、播放都用它；解不出来返回 null）。 */
+export async function audioSourceBuffer(source: string) {
+  try {
+    return await decodeClipSource(new OfflineAudioContext(1, 1, 44100), source)
+  } catch {
+    return null
+  }
+}
+
 /** 量一个素材的真实长度（加入工程时用，量不出来就返回 0 让调用方兜底）。 */
 export async function audioSourceDuration(source: string) {
-  try {
-    const buffer = await decodeClipSource(new OfflineAudioContext(1, 1, 44100), source)
-    return buffer?.duration ?? 0
-  } catch {
-    return 0
-  }
+  return (await audioSourceBuffer(source))?.duration ?? 0
 }
 
 // 同一次播放 / 导出里，多个片段可能来自同一个素材（分割出来的两半就是），只解码一次。
