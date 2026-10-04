@@ -2,10 +2,14 @@
   "name": "audio-for-imaginary-things-server",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=22.18.0"
+  },
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "start": "tsx src/index.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node --test \"src/**/*.test.ts\""
   },
   "dependencies": {
     "cors": "^2.8.5",

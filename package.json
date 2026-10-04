@@ -1,0 +1,20 @@
+{
+  "name": "sonic-matter",
+  "private": true,
+  "version": "0.0.0",
+  "description": "把手势、抽象概念与 Agent 生成结果转化为可编辑音乐工程的交互式 Web Demo",
+  "type": "module",
+  "engines": {
+    "node": ">=22.18.0"
+  },
+  "scripts": {
+    "dev": "node tools/dev.mjs",
+    "dev:server": "npm run dev --prefix server",
+    "dev:web": "npm run dev --prefix web",
+    "typecheck": "npm run typecheck --prefix server && npm run typecheck --prefix web",
+    "lint": "npm run lint --prefix web",
+    "test": "npm run test --prefix web && npm run test --prefix server",
+    "build": "npm run build --prefix web",
+    "verify": "npm run typecheck && npm run lint && npm run test && npm run build"
+  }
+}

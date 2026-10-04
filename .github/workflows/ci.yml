@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# 同一分支的新 push 直接取消上一次未跑完的任务，节省 CI 时间。
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  web:
+    name: web（类型检查 / lint / 单测 / 构建）
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: 安装依赖
+        run: npm ci
+      - name: 类型检查
+        run: npm run typecheck
+      - name: Lint
+        run: npm run lint
+      - name: 单元测试
+        run: npm test
+      - name: 生产构建
+        run: npm run build
+
+  server:
+    name: server（类型检查 / 单测）
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - name: 安装依赖
+        run: npm ci
+      - name: 类型检查
+        run: npm run typecheck
+      - name: 单元测试
+        run: npm test

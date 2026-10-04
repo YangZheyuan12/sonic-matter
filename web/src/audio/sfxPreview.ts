@@ -1,4 +1,6 @@
-import { LOCAL_SOUND_CLIP_PREFIX } from '../project/model'
+// 显式带 .ts 后缀：与源码同目录的测试用 Node 原生 TS 支持运行（node --test），
+// 原生运行时不支持省略扩展名的相对导入；Vite 与 tsc 均已开启 allowImportingTsExtensions。
+import { LOCAL_SOUND_CLIP_PREFIX } from '../project/model.ts'
 
 let previewContext: AudioContext | null = null
 let activeNodes: AudioScheduledSourceNode[] = []
