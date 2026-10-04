@@ -227,3 +227,18 @@
 .wave i{min-height:3px;transition:height .18s ease}
 @media(prefers-reduced-motion:reduce){.wave i{transition:none}}
 :root[data-theme="light"] .wave i{box-shadow:none}
+
+
+/* 时间线对齐：标签列宽与内边距收进变量，标尺 / 车道 / 播放头用同一组值算，窄屏也不会错位 */
+.timeline{--timeline-pad:20px;--lane-label:108px}
+.ruler{grid-template-columns:var(--lane-label) repeat(5,1fr) 0px}
+.ruler>span:last-child{justify-self:end}
+.lane{grid-template-columns:var(--lane-label) minmax(0,1fr)}
+.lane>div{background-image:none}
+@media(max-width:620px){
+  .timeline{--lane-label:86px}
+  /* 窄屏只留 0% 与 100% 两个刻度，但必须保留占位：display:none 会让剩下的刻度挤到前面的列里。 */
+  .ruler span:nth-child(even){display:block}
+  .ruler span:nth-child(n+3):not(:last-child){visibility:hidden}
+  .playhead{display:block}
+}

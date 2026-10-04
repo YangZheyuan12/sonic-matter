@@ -15,6 +15,7 @@ import {
   type Clip,
 } from '../project/clips'
 import { pitchName, projectDuration, trackStart, type Project, type Track } from '../project/model'
+import { rowIndexForPitch, trackRows } from '../project/tracks'
 
 type ClipDrag = { kind: 'move' | 'start' | 'end'; trackId: string; clipId: string; startX: number; width: number }
 
@@ -77,7 +78,12 @@ export default function Timeline({ project, playhead, activeTrackId, seek, editC
             onDoubleClick={event => { if (event.target !== event.currentTarget) return; const rect = event.currentTarget.getBoundingClientRect(); splitAt(track, timeAt(event.clientX, rect.width, rect.left)) }}
           >
             {track.kind === 'midi'
-              ? track.notes?.map(note => <i key={note.id} title={`${pitchName(note.pitch)} · ${note.start.toFixed(2)}s`} style={{ left: `${(trackStart(track) + note.start) / duration * 100}%`, width: `${Math.max(1.5, note.duration / duration * 100)}%`, top: `${((84 - note.pitch) % 6) * 13 + 9}%`, background: track.color }} />)
+              ? (() => {
+                // 纵向位置和卷帘用同一套行：普通轨按音高，鼓组轨按鼓件，横向时间两处完全对齐。
+                const rows = trackRows(track)
+                const rowHeight = Math.max(2.5, 100 / rows.length - 1)
+                return track.notes?.map(note => <i key={note.id} title={`${pitchName(note.pitch)} · ${note.start.toFixed(2)}s`} style={{ left: `${(trackStart(track) + note.start) / duration * 100}%`, width: `${Math.max(1.5, note.duration / duration * 100)}%`, top: `${rowIndexForPitch(rows, note.pitch) / rows.length * 100}%`, height: `${rowHeight}%`, background: track.color }} />)
+              })()
               : clips.map(clip => <div
                 key={clip.id}
                 className={`audio-clip ${selected?.clipId === clip.id ? 'selected' : ''}`}
@@ -98,7 +104,7 @@ export default function Timeline({ project, playhead, activeTrackId, seek, editC
           </div>
         </div>
       })}
-      <span className="playhead" style={{ left: `calc(128px + (100% - 148px) * ${playhead / duration})` }} />
+      <span className="playhead" style={{ left: `calc(var(--timeline-pad) + var(--lane-label) + (100% - 2 * var(--timeline-pad) - var(--lane-label)) * ${Math.max(0, Math.min(1, playhead / duration))})` }} />
     </div>
     {selectedClip && selectedTrack ? <div className="clip-inspector">
       <div>
