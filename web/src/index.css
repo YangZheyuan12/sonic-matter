@@ -99,7 +99,8 @@
 
 /* DAW-inspired editable piano roll */
 .piano-roll-panel{margin:14px 0 18px;padding:15px;border:1px solid var(--line);border-radius:10px;background:rgba(7,9,26,.72);overflow:hidden}
-.piano-roll-toolbar{display:grid;grid-template-columns:minmax(180px,280px) 1fr auto;align-items:center;gap:12px;margin:10px 0}
+.piano-roll-toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:10px 0}
+.piano-roll-toolbar>select{min-width:190px;max-width:280px}
 .piano-roll-toolbar select{width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:6px;background:rgba(10,12,31,.9);color:#fff}
 .piano-roll-toolbar>span{color:var(--muted);font:9px ui-monospace,monospace;letter-spacing:.05em}
 .piano-roll{display:grid;grid-template-columns:64px minmax(720px,1fr);height:420px;overflow:auto;border:1px solid rgba(185,192,255,.13);background:#080a18}
@@ -117,7 +118,7 @@
 .roll-note:active{cursor:grabbing}
 :root[data-theme="light"] .piano-roll-panel{background:rgba(255,255,255,.72)}
 :root[data-theme="light"] .piano-roll-toolbar select{background:#fff;color:#202230}
-@media(max-width:900px){.piano-roll-toolbar{grid-template-columns:1fr}.piano-roll{height:360px}}
+@media(max-width:900px){.piano-roll-toolbar>select{max-width:none;flex:1 1 190px}.piano-roll{height:360px}}
 
 .quantize-control{display:flex;align-items:center;gap:6px;color:var(--muted);font:9px ui-monospace,monospace;white-space:nowrap}
 .quantize-control select{width:auto!important;padding:7px 8px!important}
@@ -134,3 +135,20 @@
 :root[data-theme="light"] .note-inspector{background:rgba(255,255,255,.7)}
 :root[data-theme="light"] .note-inspector input{background:#fff;color:#202230}
 @media(max-width:900px){.note-inspector{grid-template-columns:repeat(2,1fr)}.note-inspector>div{grid-column:1/-1}}
+
+/* 钢琴卷帘编辑能力：多选、框选、量化与键盘微调 */
+.roll-actions{display:flex;flex-wrap:wrap;gap:6px;margin-left:auto}
+.roll-action{padding:7px 11px;border:1px solid var(--line);border-radius:6px;background:rgba(255,255,255,.045);color:#e7e9ff;font-size:11px;transition:.16s}
+.roll-action:hover:not(:disabled){border-color:rgba(184,184,255,.55);background:rgba(255,255,255,.09)}
+.roll-action:disabled{opacity:.45;cursor:not-allowed}
+.roll-status{display:flex;justify-content:space-between;gap:14px;margin:0 0 9px;color:var(--muted);font:9px ui-monospace,monospace;letter-spacing:.04em}
+.roll-status span:last-child{text-align:right}
+.roll-grid{user-select:none}
+.roll-marquee{position:absolute;z-index:6;border:1px solid rgba(125,211,252,.85);background:rgba(125,211,252,.14);border-radius:2px;pointer-events:none}
+.roll-nudge{display:flex;flex-wrap:wrap;gap:4px}
+.roll-nudge .roll-action{padding:6px 8px;font-size:10px}
+.roll-nudge-cell{display:grid;gap:4px}
+.roll-nudge-cell small{color:var(--muted);font:9px ui-monospace,monospace}
+.roll-inspector-actions{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+:root[data-theme="light"] .roll-action,:root[data-theme="system"] .roll-action{background:rgba(31,37,61,.06);color:#202230}
+@media(max-width:900px){.roll-actions{margin-left:0;width:100%}.roll-status{flex-direction:column;gap:4px}.roll-status span:last-child{text-align:left}}

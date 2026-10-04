@@ -33,6 +33,11 @@ export type Project = {
   tracks: Track[]
 }
 
+/** 十二平均律音名，钢琴卷帘与时间轴共用。 */
+export const PITCH_NAMES = ['C', 'C♯', 'D', 'D♯', 'E', 'F', 'F♯', 'G', 'G♯', 'A', 'A♯', 'B'] as const
+
+export const pitchName = (pitch: number) => `${PITCH_NAMES[((Math.round(pitch) % 12) + 12) % 12]}${Math.floor(Math.round(pitch) / 12) - 1}`
+
 export const projectDuration = (project: Project) => Math.max(1, Math.min(120, project.duration ?? 10))
 export const trackGain = (track: Track) => Math.max(0, Math.min(1, track.gain ?? .8))
 export const trackPan = (track: Track) => Math.max(-1, Math.min(1, track.pan ?? 0))
