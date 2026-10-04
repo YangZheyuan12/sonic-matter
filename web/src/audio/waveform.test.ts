@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { peaksFromBuffer, peaksFromChannels } from './waveform.ts'
+import { clipPeaks, peaksFromBuffer, peaksFromChannels, waveformPolygon } from './waveform.ts'
 
 // 与源码同目录，用 Node 自带的测试运行器执行：node --test "src/**/*.test.ts"
 // 波形只做纯计算，不碰 Web Audio：直接喂通道数据断言柱高。
@@ -39,4 +39,22 @@ test('peaksFromBuffer 把 AudioBuffer 的通道数据喂给同一套算法', () 
   const buffer = { numberOfChannels: 2, getChannelData: (channel: number) => channel === 0 ? Float32Array.from([.4, .4]) : Float32Array.from([.9, .1]) } as unknown as AudioBuffer
   assert.deepEqual(peaksFromBuffer(buffer, 2).map(peak => Number(peak.toFixed(3))), [1, .444])
   assert.deepEqual(peaksFromBuffer(null, 2), [])
+})
+
+test('waveformPolygon 上下对称：峰值 1 顶到边、峰值 0 贴着中线', () => {
+  const points = waveformPolygon([1, 0]).split(' ')
+  assert.deepEqual(points, ['0.00,1.00', '100.00,50.00', '100.00,50.00', '0.00,99.00'], '先走上边再折回下边')
+  assert.equal(waveformPolygon([]), '', '没有峰值就没有多边形')
+  assert.equal(waveformPolygon([.5]).split(' ').length, 2, '只有一根柱时不会除以零')
+  const clamped = waveformPolygon([2]).split(' ')[0]
+  assert.equal(clamped, '0.00,1.00', '超过 1 的峰值被压回边界内')
+})
+
+test('clipPeaks 只取片段裁出来的那一段素材', () => {
+  const peaks = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+  assert.deepEqual(clipPeaks(peaks, 10, 2, 3), [2, 3, 4], '入点 2s、时长 3s 的片段对应第 3-5 根柱')
+  assert.deepEqual(clipPeaks(peaks, 10, 0, 100), peaks, '裁到素材末尾之外也不会越界')
+  assert.deepEqual(clipPeaks(peaks, 10, -1, 1), [0], '负入点被钳到 0，且至少保留一根柱')
+  assert.deepEqual(clipPeaks(peaks, 0, 2, 3), peaks, '量不出素材长度就整段显示')
+  assert.deepEqual(clipPeaks([], 10, 0, 1), [], '没有波形就没有片段波形')
 })

@@ -1,4 +1,4 @@
-import { useState, type PointerEvent as ReactPointerEvent } from 'react'
+import { useEffect, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import {
   CLIP_MIN_DURATION,
   clipAt,
@@ -14,8 +14,9 @@ import {
   trimClipEdge,
   type Clip,
 } from '../project/clips'
-import { pitchName, projectDuration, trackStart, type Project, type Track } from '../project/model'
+import { isPlayableClip, pitchName, projectDuration, trackStart, type Project, type Track } from '../project/model'
 import { rowIndexForPitch, trackRows } from '../project/tracks'
+import { WAVEFORM_BUCKETS, clipPeaks, waveformFor, waveformPolygon, type Waveform } from '../audio/waveform'
 
 type ClipDrag = { kind: 'move' | 'start' | 'end'; trackId: string; clipId: string; startX: number; width: number }
 
@@ -32,6 +33,17 @@ export default function Timeline({ project, playhead, activeTrackId, seek, editC
 }) {
   const [selected, setSelected] = useState<{ trackId: string; clipId: string } | null>(null)
   const [drag, setDrag] = useState<ClipDrag | null>(null)
+  // 片段里画真实波形：所有用到的素材解码一次，按来源缓存（同一素材摆多次只解一次）。
+  const sourceKey = JSON.stringify([...new Set(project.tracks.flatMap(track => clipsOf(track).map(clip => clip.source)).filter(isPlayableClip))].sort())
+  const [waves, setWaves] = useState<Record<string, Waveform>>({})
+  useEffect(() => {
+    if (sourceKey === '[]') return
+    let alive = true
+    const sources = JSON.parse(sourceKey) as string[]
+    void Promise.all(sources.map(async source => [source, await waveformFor(source, WAVEFORM_BUCKETS)] as const))
+      .then(entries => { if (alive) setWaves(Object.fromEntries(entries)) })
+    return () => { alive = false }
+  }, [sourceKey])
   const duration = projectDuration(project)
   const time = (value: number) => `00:${Math.floor(value).toString().padStart(2, '0')}`
   const soloActive = project.tracks.some(track => track.solo)
@@ -94,6 +106,7 @@ export default function Timeline({ project, playhead, activeTrackId, seek, editC
                 onPointerUp={() => setDrag(null)}
                 onPointerCancel={() => setDrag(null)}
               >
+                <Wave peaks={clipPeaks(waves[clip.source]?.peaks ?? [], waves[clip.source]?.duration ?? 0, clip.offset, clip.duration)} />
                 <span className="clip-handle" onPointerDown={event => clipPointerDown(event, track, clip, 'start')} />
                 <span className="clip-label">{clipSourceLabel(clip.source)} · {clip.duration.toFixed(1)}s</span>
                 <span className="clip-handle right" onPointerDown={event => clipPointerDown(event, track, clip, 'end')} />
@@ -124,4 +137,11 @@ export default function Timeline({ project, playhead, activeTrackId, seek, editC
       </div>
     </div> : <p className="hint">音频轨道上的片段可以拖动改位置、拖左右边缘裁剪、双击分割；选中片段后调整淡入 / 淡出 / 增益，播放与 WAV / MP3 导出都会带上这些设置。</p>}
   </>
+}
+
+/** 片段里的波形：上下对称的多边形，宽度跟着片段拉伸，裁剪后画的就是裁出来的那一段。 */
+function Wave({ peaks }: { peaks: number[] }) {
+  const points = waveformPolygon(peaks)
+  if (!points) return null
+  return <svg className="clip-wave" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><polygon points={points} /></svg>
 }
