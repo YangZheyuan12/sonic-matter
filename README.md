@@ -74,6 +74,7 @@ web/public/soundfonts/
 在仓库根目录执行：
 
 ```powershell
+npm ci --prefix server ; npm ci --prefix web   # 首次准备依赖
 npm run verify
 ```
 
@@ -82,27 +83,14 @@ npm run verify
 ```powershell
 npm run typecheck   # server: tsc --noEmit，web: tsc -b
 npm run lint        # oxlint
-npm test            # node:test（web 12 例 + server 7 例）
+npm test            # node:test（web + server 的全部用例）
 npm run build       # web 生产构建
 ```
 
-测试用 Node 自带的 `node:test`，不引入额外依赖，离线也能跑。推送后由 `.github/workflows/ci.yml` 在 CI 里跑同一套命令。
+只检查一个包时，可以进到对应目录跑 `npm ci ; npm run verify`——`server/` 与 `web/` 各自都有一个 `verify` 脚本。
 
-## 接口与错误约定
-
-前后端只通过 `Project` 数据结构和 9 个 `/api/*` 接口耦合，接口清单见 `server/README.md`。
-所有失败响应都是统一信封 `{ error, code, status, retryable, detail?, requestId }`，前端据此给出中文提示、重试按钮和取消能力；`X-Request-Id` 可以和服务端日志对上。
-协作与提交约定见 `AGENTS.md`。
-
-## 项目结构
-
-```text
-server/   Express + OpenAI/Replicate/ElevenLabs 的 Agent 与音频导出服务（8787）
-web/      React + TypeScript + Vite 前端（5173，`/api` 与 `/generated` 代理到 8787）
-tools/    仓库级脚本（dev.mjs：一条命令同时启动前后端）
-.github/  CI 工作流
-```
+测试用 Node 自带的 `node:test`，不引入额外依赖，离线也能跑。推送后由 `.github/workflows/ci.yml` 在 Node 24（见 `.nvmrc`）上跑同一套命令。
 
 ## 当前状态
 
-这是可交互的功能 Demo，已有单元测试与 CI 兜底。多选音符、撤销/重做、完整音频波形编辑、多供应商 Provider Adapter 和云端项目存储仍属于后续路线。
+这是可交互的功能 Demo：多轨管理、钢琴卷帘音符编辑、撤销/重做（带合并窗口）、音频片段的裁剪 / 移动 / 分割与淡入淡出增益、真实波形显示、工程本地存取，以及 MIDI / WAV / MP3 导出都已经落地，并由单元测试与 CI 兜底。多供应商 Provider Adapter（真实音乐、音效生成）与云端项目存储仍属于后续路线——本项目刻意不做登录与后端数据库。

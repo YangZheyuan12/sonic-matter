@@ -25,6 +25,9 @@ REPLICATE_API_TOKEN=你的_replicate_token
 MUSIC_REPLICATE_MODEL=meta/musicgen
 ELEVENLABS_API_KEY=你的_elevenlabs_key
 PORT=8787
+# 服务端行为
+CORS_ORIGIN=
+JSON_BODY_LIMIT=2mb
 # 下面这些都有默认值，一般不用改
 AGENT_TIMEOUT_MS=60000
 PROVIDER_TIMEOUT_MS=180000
@@ -39,6 +42,11 @@ LOG_LEVEL=info
 ```powershell
 npm test
 ```
+
+`CORS_ORIGIN` 用逗号分隔多个浏览器来源；留空表示不限制来源（只适合本地开发）。不在名单里的来源会收到 `403` + `cors_not_allowed`。
+`JSON_BODY_LIMIT` 控制请求体上限，默认 `2mb`，超限返回 `413` + `payload_too_large`。
+每个请求都会带上 `X-Request-Id`（请求头里给了就沿用），错误信封里也有同一个 `requestId`，方便和服务端日志对上。
+`SONIC_MATTER_TEST=1` 时服务只导出 `app`、不监听端口，供接口冒烟测试使用。
 
 用 Node 自带的 `node:test` 运行 `src/**/*.test.ts`（不需要额外依赖）。注意 Node 原生运行时不支持省略扩展名的相对导入，因此服务端源码里的相对导入统一写成 `./midi.ts` 这种形式；`tsconfig.json` 已打开 `allowImportingTsExtensions`，`tsx` 与 `tsc` 都能正常解析。
 

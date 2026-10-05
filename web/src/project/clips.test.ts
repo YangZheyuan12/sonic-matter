@@ -25,6 +25,24 @@ const clip = (over: Partial<Clip> = {}): Clip => ({ id: 'clip-1', source: '/gene
 const audioTrack = (over: Partial<Track> = {}): Track => ({ id: 'ai-music', name: 'AI 生成音频', kind: 'audio', instrument: 'Audio Model', color: '#c4b5fd', clips: [clip()], gain: .8, ...over })
 const project = (track: Track): Project => ({ title: '测试', tempo: 92, key: 'C', duration: 10, tracks: [track] })
 
+test('队友版本写在轨道上的 clipStart / clipEnd / fadeIn / fadeOut 会折算进片段', () => {
+  const local = encodeSoundClip('冰面开裂', mixer)
+  const upgraded = clipsOf(audioTrack({ clips: undefined, clip: local, clipStart: .5, clipEnd: 2, fadeIn: .2, fadeOut: .3 }))
+  assert.equal(upgraded.length, 1)
+  assert.equal(upgraded[0].offset, .5, 'clipStart 是素材里的入点')
+  assert.equal(upgraded[0].duration, 1.5, 'duration = clipEnd - clipStart')
+  assert.equal(upgraded[0].fadeIn, .2)
+  assert.equal(upgraded[0].fadeOut, .3)
+  // 只写了一半（只有 clipStart，没有 clipEnd）时退回素材自身长度，不能算出负时长
+  const partial = clipsOf(audioTrack({ clips: undefined, clip: local, clipStart: .5 }))
+  assert.equal(partial[0].offset, .5)
+  assert.equal(partial[0].duration, mixer.length)
+  const inverted = clipsOf(audioTrack({ clips: undefined, clip: local, clipStart: 3, clipEnd: 1 }))
+  assert.equal(inverted[0].duration, CLIP_MIN_DURATION, '出点小于入点时至少要留一个最短片段')
+  // 新字段存在时以新字段为准，老字段只是兼容读取
+  assert.equal(clipsOf(audioTrack({ clipStart: 5, clipEnd: 9 }))[0].offset, 0)
+})
+
 test('clipsOf 把老工程的单片段字段升级成片段数组', () => {
   const local = encodeSoundClip('冰面开裂', mixer)
   const upgraded = clipsOf(audioTrack({ clips: undefined, clip: local }))

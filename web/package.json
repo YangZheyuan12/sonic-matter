@@ -12,6 +12,7 @@
     "lint": "oxlint",
     "typecheck": "tsc -b",
     "test": "node --test \"src/**/*.test.ts\"",
+    "verify": "npm run typecheck && npm run lint && npm test && npm run build",
     "preview": "vite preview"
   },
   "dependencies": {

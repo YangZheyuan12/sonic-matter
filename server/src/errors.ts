@@ -15,6 +15,7 @@ export type ErrorCode =
   | 'bad_request'
   | 'not_found'
   | 'payload_too_large'
+  | 'cors_not_allowed'
   | 'provider_not_configured'
   | 'provider_unauthorized'
   | 'provider_rate_limited'
@@ -57,8 +58,15 @@ export const badRequest = (message: string, detail?: string) =>
 
 export const notFound = (message = '接口不存在。') => new AppError(message, { code: 'not_found', status: 404 })
 
-export const payloadTooLarge = (message = '请求体过大，请减少数据量后重试。') =>
-  new AppError(message, { code: 'payload_too_large', status: 413 })
+export const payloadTooLarge = (message = '请求体过大，请减少数据量后重试。', detail?: string) =>
+  new AppError(message, { code: 'payload_too_large', status: 413, detail })
+
+/** 浏览器来源不在 CORS_ORIGIN 名单里。这是配置问题，重试没有意义。 */
+export const forbiddenOrigin = (origin: string) =>
+  new AppError(
+    `当前来源（${origin}）不在允许的 CORS_ORIGIN 列表中，请把它加进 server/.env 后重启服务。`,
+    { code: 'cors_not_allowed', status: 403, detail: origin },
+  )
 
 export const providerNotConfigured = (message: string, detail?: string) =>
   new AppError(message, { code: 'provider_not_configured', status: 503, detail })
@@ -225,6 +233,10 @@ export function toAppError(error: unknown): AppError {
       cause: error,
     })
   }
+  // body-parser 超限：错误对象上带 type: 'entity.too.large'（也带 status 413，
+  // 但那是「请求体太大」而不是上游拒绝，必须在通用的 .status 分支之前拦下来）。
+  const bodyParserType = (error as { type?: unknown } | null)?.type
+  if (bodyParserType === 'entity.too.large') return payloadTooLarge(undefined, String(bodyParserType))
   // OpenAI SDK 的错误带 .status
   const status = (error as { status?: unknown } | null)?.status
   if (typeof status === 'number') return fromProviderStatus(status, '上游 Agent', raw, error)

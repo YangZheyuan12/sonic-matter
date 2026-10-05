@@ -24,11 +24,30 @@ export function clipDurationFor(source: string, fallback = 4) {
   return decodeSoundClip(source)?.mixer.length ?? fallback
 }
 
-/** 老工程只有单个 `clip` 字段时的兜底片段，让老工程也能直接裁剪 / 分割。 */
+/** 老工程只有单个 `clip` 字段时的兜底片段，让老工程也能直接裁剪 / 分割。
+ *  队友版本把裁剪区间写在轨道上（clipStart / clipEnd，单位是素材里的秒），
+ *  这里折算成片段自己的 offset / duration：offset = 素材入点，duration = 出点 - 入点。 */
 function legacyClips(track: Track) {
   if (!track.clip) return []
-  return [clampClip({ id: `clip-${track.id}`, source: track.clip, start: 0, offset: 0, duration: clipDurationFor(track.clip), fadeIn: 0, fadeOut: 0, gain: 1 })]
+  const offset = Math.max(0, numberOr(track.clipStart, 0))
+  const end = numberOr(track.clipEnd, NaN)
+  const duration = Number.isFinite(end)
+    ? Math.max(CLIP_MIN_DURATION, end - offset)
+    : clipDurationFor(track.clip)
+  return [clampClip({
+    id: `clip-${track.id}`,
+    source: track.clip,
+    start: 0,
+    offset,
+    duration,
+    fadeIn: numberOr(track.fadeIn, 0),
+    fadeOut: numberOr(track.fadeOut, 0),
+    gain: 1,
+  })]
 }
+
+/** 只有真的数字才算数：NaN / undefined 一律回落到默认值。 */
+const numberOr = (value: unknown, fallback: number) => typeof value === 'number' && Number.isFinite(value) ? value : fallback
 
 /** 读音频轨的片段的唯一入口：新字段优先，老字段自动升级。 */
 export function clipsOf(track: Track | undefined): Clip[] {

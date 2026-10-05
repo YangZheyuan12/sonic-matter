@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { z } from 'zod'
-import { badRequest, errorPayload, fromProviderStatus, toAppError, zodDetail } from './errors.ts'
+import { badRequest, errorPayload, forbiddenOrigin, fromProviderStatus, toAppError, zodDetail } from './errors.ts'
 
 test('AppError 工厂保留 code / status / detail', () => {
   const error = badRequest('concept 必须是 1-80 个字符。', 'concept: Too big')
@@ -95,3 +95,25 @@ test('zodDetail 把校验问题压成一行', () => {
     assert.equal(toAppError(result.error).code, 'provider_bad_response')
   }
 })
+test('body-parser 的 entity.too.large 翻成 413，而不是被当成上游拒绝', () => {
+  const tooLarge = toAppError(Object.assign(new Error('request entity too large'), {
+    type: 'entity.too.large',
+    status: 413,
+    statusCode: 413,
+  }))
+  assert.equal(tooLarge.code, 'payload_too_large')
+  assert.equal(tooLarge.status, 413)
+  assert.equal(tooLarge.retryable, false)
+  assert.equal(errorPayload(tooLarge, 'req-1').code, 'payload_too_large')
+})
+
+test('来源不在 CORS_ORIGIN 名单里是 403 + cors_not_allowed', () => {
+  const error = forbiddenOrigin('http://evil.example')
+  assert.equal(error.code, 'cors_not_allowed')
+  assert.equal(error.status, 403)
+  assert.equal(error.retryable, false)
+  assert.equal(error.detail, 'http://evil.example')
+  assert.match(error.message, /CORS_ORIGIN/)
+  assert.equal(toAppError(error), error, '已经是 AppError 就原样透传')
+})
+

@@ -12,9 +12,12 @@ import { logger } from './logger.ts'
 import { noteSchema, projectSchema, trackSchema } from './projectSchema.ts'
 import {
   agentTimeoutMs,
+  allowedOrigins,
   asyncHandler,
+  corsOrigin,
   errorHandler,
   fetchWithRetry,
+  jsonBodyLimit,
   notFoundHandler,
   requestContext,
 } from './http.ts'
@@ -28,8 +31,9 @@ const generatedDir = path.resolve(process.cwd(), 'generated')
 const replicateModel = process.env.MUSIC_REPLICATE_MODEL ?? 'meta/musicgen'
 
 app.use(requestContext())
-app.use(cors())
-app.use(express.json({ limit: '2mb' }))
+// 配了 CORS_ORIGIN 就只放行名单里的来源，其它来源由 errorHandler 转成 403。
+app.use(cors(allowedOrigins.length ? { origin: corsOrigin } : undefined))
+app.use(express.json({ limit: jsonBodyLimit }))
 app.use('/generated', express.static(generatedDir))
 const agentConfigSchema = z.object({
   baseUrl: z.string().trim().url().optional(),
@@ -305,37 +309,46 @@ app.post('/api/export/midi', asyncHandler(async (req, res) => {
 app.use(notFoundHandler)
 app.use(errorHandler)
 
-const server = app.listen(port, () => {
-  const config = resolveAgentConfig()
-  logger.info('Agent server 已启动', {
-    url: `http://localhost:${port}`,
-    agent: Boolean(config.apiKey),
-    model: config.model,
-    protocol: config.protocol,
-  })
-})
+/** 单测用 SONIC_MATTER_TEST=1 引入 app 做接口冒烟，不监听端口。 */
+export { app }
 
-server.on('error', (error: NodeJS.ErrnoException) => {
-  if (error.code === 'EADDRINUSE') {
-    logger.error(`端口 ${port} 已被占用：可能是上一次的服务没有退出。可以设置 PORT 换一个端口，或先结束占用进程。`, { code: error.code })
-  } else {
-    logger.error('服务器启动失败', { code: error.code, error: error.message })
+function startServer() {
+  const server = app.listen(port, () => {
+    const config = resolveAgentConfig()
+    logger.info('Agent server 已启动', {
+      url: `http://localhost:${port}`,
+      agent: Boolean(config.apiKey),
+      model: config.model,
+      protocol: config.protocol,
+    })
+  })
+
+  server.on('error', (error: NodeJS.ErrnoException) => {
+    if (error.code === 'EADDRINUSE') {
+      logger.error(`端口 ${port} 已被占用：可能是上一次的服务没有退出。可以设置 PORT 换一个端口，或先结束占用进程。`, { code: error.code })
+    } else {
+      logger.error('服务器启动失败', { code: error.code, error: error.message })
+    }
+    process.exit(1)
+  })
+
+  function shutdown(signal: string) {
+    logger.info('收到退出信号，正在关闭服务', { signal })
+    const force = setTimeout(() => process.exit(0), 5_000)
+    force.unref?.()
+    server.close(() => {
+      logger.info('服务已关闭')
+      process.exit(0)
+    })
   }
-  process.exit(1)
-})
 
-function shutdown(signal: string) {
-  logger.info('收到退出信号，正在关闭服务', { signal })
-  const force = setTimeout(() => process.exit(0), 5_000)
-  force.unref?.()
-  server.close(() => {
-    logger.info('服务已关闭')
-    process.exit(0)
-  })
+  process.on('SIGINT', () => shutdown('SIGINT'))
+  process.on('SIGTERM', () => shutdown('SIGTERM'))
 }
 
-process.on('SIGINT', () => shutdown('SIGINT'))
-process.on('SIGTERM', () => shutdown('SIGTERM'))
+/** 构建 / 测试环境（SONIC_MATTER_TEST=1）只导出 app，不监听端口。 */
+if (process.env.SONIC_MATTER_TEST !== '1') startServer()
+
 process.on('unhandledRejection', (reason: unknown) => {
   const error = toAppError(reason)
   if (isClientGone(error)) return

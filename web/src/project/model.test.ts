@@ -149,6 +149,24 @@ test('normalizeProject 修复脏数据而不是直接崩溃', () => {
   assert.equal(second.clip, '/generated/a.wav')
 })
 
+test('normalizeProject 保留队友版本的老裁剪字段，但不会把 NaN 写进工程', () => {
+  const normalized = normalizeProject({
+    tracks: [
+      { id: 'ai-music', kind: 'audio', clip: '/generated/a.wav', clipStart: .5, clipEnd: 2, fadeIn: .2, fadeOut: 'x' },
+      { id: 'melody', kind: 'midi', clipStart: 1, fadeIn: 1 },
+    ],
+  })
+  const [audio, midi] = normalized.tracks
+  assert.equal(audio.clipStart, .5)
+  assert.equal(audio.clipEnd, 2)
+  assert.equal(audio.fadeIn, .2)
+  assert.equal(audio.fadeOut, undefined, '不是有限数字的字段要丢掉')
+  assert.equal(midi.clipStart, undefined, '老字段只对音频轨有意义')
+  assert.equal(midi.fadeIn, undefined)
+  // 归一化后的工程会被 App 写进 localStorage，JSON 里不能出现 null / NaN
+  assert.equal(JSON.stringify(normalized).includes('null'), false)
+})
+
 test('normalizeProject 对结构性错误给出中文报错', () => {
   assert.throws(() => normalizeProject(null), /不是有效的 JSON 对象/)
   assert.throws(() => normalizeProject('{}'), /不是有效的 JSON 对象/)

@@ -30,6 +30,12 @@ export type Track = {
   notes?: Note[]
   /** 旧的单片段字段：只在读取老工程时出现，代码里请统一用 clipsOf(track)。 */
   clip?: string
+  /** 队友版本写在轨道上的裁剪区间 / 淡入淡出：同样只在读老工程时出现，
+   *  clipsOf(track) 会把它折算进片段的 offset / duration / fadeIn / fadeOut。 */
+  clipStart?: number
+  clipEnd?: number
+  fadeIn?: number
+  fadeOut?: number
   clips?: Clip[]
   gain?: number
   pan?: number
@@ -149,6 +155,11 @@ export function normalizeProject(value: unknown): Project {
       color: text(track.color, '#7dd3fc'),
       notes,
       clip: typeof track.clip === 'string' ? track.clip : undefined,
+      // 队友版本留在轨道上的裁剪区间：只在是有限数字时保留，避免把 NaN 写进 localStorage
+      clipStart: kind === 'audio' && Number.isFinite(track.clipStart) ? track.clipStart : undefined,
+      clipEnd: kind === 'audio' && Number.isFinite(track.clipEnd) ? track.clipEnd : undefined,
+      fadeIn: kind === 'audio' && Number.isFinite(track.fadeIn) ? track.fadeIn : undefined,
+      fadeOut: kind === 'audio' && Number.isFinite(track.fadeOut) ? track.fadeOut : undefined,
       clips: Array.isArray(track.clips) ? track.clips.map((clip, clipIndex) => normalizeClip(clip, clipIndex)) : undefined,
       gain: Math.max(0, Math.min(1, finite(track.gain, .8))),
       pan: Math.max(-1, Math.min(1, finite(track.pan, 0))),

@@ -39,3 +39,21 @@ test('前端多塞的未知字段会被剥掉，不会让请求 400', () => {
   assert.equal('somethingNew' in parsed, false)
   assert.equal(parsed.tracks[0].clips?.length, 1)
 })
+test('字符串与数组都有上限，挡住整包塞爆请求体的做法', () => {
+  assert.equal(projectSchema.safeParse(project([audioTrack({ name: 'x'.repeat(121) })])).success, false)
+  assert.equal(projectSchema.safeParse(project([audioTrack({ instrument: 'x'.repeat(61) })])).success, false)
+  assert.equal(projectSchema.safeParse(project([audioTrack({ id: '' })])).success, false)
+  assert.equal(projectSchema.safeParse({ ...project([audioTrack()]), title: '' }).success, false)
+  assert.equal(projectSchema.safeParse({ ...project([audioTrack()]), key: 'x'.repeat(31) }).success, false)
+  assert.equal(projectSchema.safeParse({ ...project([audioTrack()]), tracks: [] }).success, false)
+  const manyTracks = Array.from({ length: 33 }, (_, index) => audioTrack({ id: `t-${index}` }))
+  assert.equal(projectSchema.safeParse({ ...project([audioTrack()]), tracks: manyTracks }).success, false)
+  const note = (index: number) => ({ id: `n-${index}`, pitch: 60, start: 0, duration: .5, velocity: 90 })
+  const midiTrack = (count: number) => ({ id: 'melody', name: '旋律', kind: 'midi', instrument: 'Piano', color: '#fff', notes: Array.from({ length: count }, (_, index) => note(index)) })
+  assert.equal(projectSchema.safeParse(project([midiTrack(4097)])).success, false, '音符数量超上限要挡下来')
+  assert.equal(projectSchema.safeParse(project([midiTrack(4096)])).success, true)
+  // 上限留了余量：正常工程与 base64 的本地音效计划都能进来
+  assert.equal(projectSchema.safeParse(project([audioTrack({ name: 'x'.repeat(120) })])).success, true)
+  assert.equal(trackSchema.safeParse(audioTrack({ clips: undefined, clip: 'local-sfx:' + 'a'.repeat(9000) })).success, true)
+})
+

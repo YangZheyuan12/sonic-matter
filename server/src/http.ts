@@ -5,7 +5,7 @@ import type {
   RequestHandler,
   Response as ExpressResponse,
 } from 'express'
-import { AppError, badRequest, errorPayload, notFound, toAppError } from './errors.ts'
+import { AppError, badRequest, errorPayload, forbiddenOrigin, notFound, toAppError } from './errors.ts'
 import { logger } from './logger.ts'
 
 declare module 'express-serve-static-core' {
@@ -23,6 +23,22 @@ export function readEnvInt(name: string, fallback: number, min: number, max: num
   const parsed = Number.parseInt(process.env[name] ?? '', 10)
   if (!Number.isFinite(parsed)) return fallback
   return Math.min(max, Math.max(min, parsed))
+}
+
+/** 允许访问的浏览器来源（CORS_ORIGIN，逗号分隔）。留空 = 不限制来源，方便本地开发。 */
+export const allowedOrigins = (process.env.CORS_ORIGIN ?? '')
+  .split(',').map(value => value.trim()).filter(Boolean)
+
+/** 请求体上限（JSON_BODY_LIMIT）。超过上限 body-parser 会抛 entity.too.large，最终变成 413。 */
+export const jsonBodyLimit = process.env.JSON_BODY_LIMIT ?? '2mb'
+
+/** cors 中间件的 origin 回调：来源不在白名单时抛 403，交给 errorHandler 转成统一信封。 */
+export function corsOrigin(
+  origin: string | undefined,
+  callback: (error: Error | null, allow?: boolean) => void,
+) {
+  if (!origin || allowedOrigins.includes(origin)) return callback(null, true)
+  return callback(forbiddenOrigin(origin))
 }
 
 /** 单个上游请求的超时（毫秒）。音频模型很慢，所以默认给到 3 分钟。 */
