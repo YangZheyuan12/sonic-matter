@@ -1,0 +1,11 @@
+{
+  /* 测试单独一份 config：只有测试需要 Node 类型（node:test / node:assert / Buffer），
+     应用代码继续保持 types: ["vite/client"]，避免浏览器代码误用 Node API。 */
+  "extends": "./tsconfig.app.json",
+  "compilerOptions": {
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.test.tsbuildinfo",
+    "types": ["node"]
+  },
+  "include": ["src/**/*.test.ts"],
+  "exclude": []
+}
