@@ -3,6 +3,7 @@
 把本机 Demo 变成"别人打开网址就能用"的线上服务。当前赛期内的目标机器是一台**阿里云华南 2 核 1.8G / Alibaba Cloud Linux 3**，上面已经装了宝塔面板，因此方案刻意选择**改动最小**的方式。
 
 > 如果要把这份文档发给**服务器 owner**（说明"会在她服务器上做什么、需要她做什么"），用更适合非执行者阅读的版本：[`队友服务器操作步骤.md`](%E9%98%9F%E5%8F%8B%E6%9C%8D%E5%8A%A1%E5%99%A8%E6%93%8D%E4%BD%9C%E6%AD%A5%E9%AA%A4.md)。本文档是执行细节，那份是"改动清单 + 资源占用 + 一键卸载"。
+> 如果对方想先看「你们现在做到哪了、我需要回什么数据」，用 [`给队友的交接说明.md`](%E7%BB%99%E9%98%9F%E5%8F%8B%E7%9A%84%E4%BA%A4%E6%8E%A5%E8%AF%B4%E6%98%8E.md)（现状 + 待办 + 回执模板）。
 
 ## 0. 目标形态
 
@@ -61,6 +62,17 @@ ls /opt/sonic-matter          # 期望看到 server/  web/  deploy/
 ```
 
 > 用宝塔面板的「文件管理」直接拖拽上传也完全可以，效果一样。
+
+> **更省事的做法**：这个仓库本来就在服务器 owner 自己的 GitHub 上，那就在服务器上直接 clone 源码，只有前端产物需要我们单独发一个包（`web/dist` 是构建产物，不入库）：
+>
+> ```bash
+> git clone --depth 1 -b main https://github.com/YangZheyuan12/sonic-matter.git /tmp/sm-src
+> cp -r /tmp/sm-src/server /opt/sonic-matter/
+> mkdir -p /opt/sonic-matter/deploy && cp /tmp/sm-src/deploy/sonic-matter.service /opt/sonic-matter/deploy/
+> rm -rf /tmp/sm-src
+> ```
+>
+> 依赖清单一并带过来了（`server/package-lock.json` 在仓库里），第 4 节的 `npm ci` 照旧。
 
 ## 4. 安装后端依赖（走国内镜像）
 
