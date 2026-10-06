@@ -18,6 +18,7 @@ Environment=NODE_ENV=production
 Environment=PORT=8080
 Environment=SERVE_WEB=1
 Environment=WEB_DIST_DIR=/opt/sonic-matter/web/dist
+Environment=PROJECTS_DIR=/opt/sonic-matter/server/projects
 Environment=DATA_DIR=/opt/sonic-matter/server/generated
 
 # 直接用 Node 24 运行 TypeScript 入口（原生类型剥离），生产环境不需要 tsx。
