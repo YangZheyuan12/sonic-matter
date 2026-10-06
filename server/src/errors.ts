@@ -14,6 +14,8 @@ import { z } from 'zod'
 export type ErrorCode =
   | 'bad_request'
   | 'not_found'
+  | 'forbidden'
+  | 'quota_exceeded'
   | 'payload_too_large'
   | 'cors_not_allowed'
   | 'provider_not_configured'
@@ -57,6 +59,14 @@ export const badRequest = (message: string, detail?: string) =>
   new AppError(message, { code: 'bad_request', status: 400, detail })
 
 export const notFound = (message = '接口不存在。') => new AppError(message, { code: 'not_found', status: 404 })
+
+/** 不允许修改别人的东西（云端工程不是本机浏览器保存的）。注意这不是账号认证，只是防误改。 */
+export const forbidden = (message: string, detail?: string) =>
+  new AppError(message, { code: 'forbidden', status: 403, detail })
+
+/** 配额用尽（云端工程数量上限）：重试没有意义，要用户先删掉一些。 */
+export const quotaExceeded = (message: string, detail?: string) =>
+  new AppError(message, { code: 'quota_exceeded', status: 429, detail })
 
 export const payloadTooLarge = (message = '请求体过大，请减少数据量后重试。', detail?: string) =>
   new AppError(message, { code: 'payload_too_large', status: 413, detail })

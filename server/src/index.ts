@@ -11,6 +11,8 @@ import { buildMidiFile, MidiExportError } from './midi.ts'
 import { badRequest, isAbortError, isClientGone, providerNotConfigured, toAppError, zodDetail } from './errors.ts'
 import { logger } from './logger.ts'
 import { noteSchema, projectSchema, trackSchema } from './projectSchema.ts'
+import { projectsRouter } from './projects.ts'
+import { ProjectStore } from './projectStore.ts'
 import {
   agentTimeoutMs,
   allowedOrigins,
@@ -33,6 +35,8 @@ const generatedDir = path.resolve(process.cwd(), process.env.DATA_DIR ?? 'genera
 /** 生产部署（SERVE_WEB=1）用同一个端口托管前端构建产物，省掉 Nginx 和跨域配置。 */
 const webDistDir = path.resolve(process.cwd(), process.env.WEB_DIST_DIR ?? '../web/dist')
 const serveWeb = process.env.SERVE_WEB === '1'
+/** 云端工程库（SQLite 文件）的目录。**必须放在 /generated 之外**——那个目录是公开静态托管的。 */
+const projectsDir = path.resolve(process.cwd(), process.env.PROJECTS_DIR ?? 'projects')
 const replicateModel = process.env.MUSIC_REPLICATE_MODEL ?? 'meta/musicgen'
 
 app.use(requestContext())
@@ -310,6 +314,9 @@ app.post('/api/export/midi', asyncHandler(async (req, res) => {
     throw error
   }
 }))
+
+/** 云端工程：Demo 级实现，读取公开（分享链接），写改删要 owner 匹配；详见 projects.ts 顶部注释。 */
+app.use('/api/projects', projectsRouter(new ProjectStore(projectsDir)))
 
 /**
  * 生产模式用同一个端口同时提供前端页面和 API，浏览器看到的是同源请求，
