@@ -3,6 +3,7 @@ node_modules/
 dist/
 dist-ssr/
 server/generated/
+server/projects/
 
 # Secrets and local configuration
 .env
@@ -37,3 +38,9 @@ Thumbs.db
 
 # TS 增量编译缓存
 *.tsbuildinfo
+
+# 私钥 / 证书 / Python 虚拟环境（凭据类文件一律不入库）
+*.pem
+*.key
+__pycache__/
+.venv/

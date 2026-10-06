@@ -1,0 +1,44 @@
+[Unit]
+Description=Sonic Matter (前端 + API 单端口服务)
+Documentation=file:/opt/sonic-matter/deploy/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/sonic-matter/server
+
+# 密钥等敏感配置只放在这个文件里（chmod 600，永不入库）。
+# 前缀 "-" 表示文件不存在时也继续启动（此时走本地 fallback，功能仍可用）。
+EnvironmentFile=-/opt/sonic-matter/server/.env
+
+# 部署参数：为清晰起见这里显式写一遍，同时请让 deploy/README.md 里的 .env 保持一致
+# （systemd 中 EnvironmentFile 的优先级高于 Environment=，两边写成同一个值最省心）。
+Environment=NODE_ENV=production
+Environment=PORT=8080
+Environment=SERVE_WEB=1
+Environment=WEB_DIST_DIR=/opt/sonic-matter/web/dist
+Environment=PROJECTS_DIR=/opt/sonic-matter/server/projects
+Environment=DATA_DIR=/opt/sonic-matter/server/generated
+
+# 直接用 Node 24 运行 TypeScript 入口（原生类型剥离），生产环境不需要 tsx。
+ExecStart=/opt/sonic-matter/node/bin/node /opt/sonic-matter/server/src/index.ts
+
+Restart=always
+RestartSec=3
+
+# 内存保险：超限只杀本服务，不会波及同机上的宝塔 / MySQL 等其它进程。
+MemoryMax=512M
+
+# 最小加固；若启动失败先逐行注释掉排查。
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+
+# 日志走 journald：journalctl -u sonic-matter -f
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
