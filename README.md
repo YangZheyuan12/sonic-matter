@@ -91,6 +91,25 @@ npm run build       # web 生产构建
 
 测试用 Node 自带的 `node:test`，不引入额外依赖，离线也能跑。推送后由 `.github/workflows/ci.yml` 在 Node 24（见 `.nvmrc`）上跑同一套命令。
 
+## 部署（单端口上线）
+
+线上部署刻意保持"**一个进程、一个端口**"：设 `SERVE_WEB=1` 后，后端用 `express.static` 直接托管 `web/dist`，前端与 API 同源，因此不需要 Nginx，也不需要配置 CORS。前端是单页应用且没有路由库（分享链接走 `?p=<id>` 查询参数），所以也不需要 SPA fallback。
+
+```bash
+cd server
+SERVE_WEB=1 PORT=8080 node src/index.ts   # Node 24 原生运行 TS 入口，生产环境不需要 tsx
+```
+
+相关环境变量（见 [`server/.env.example`](server/.env.example)）：
+
+| 变量 | 说明 |
+| --- | --- |
+| `SERVE_WEB` | `1` = 同时托管前端构建产物；本地开发保持 `0`，继续用 Vite 的 5173 |
+| `WEB_DIST_DIR` | 前端构建产物目录，相对 `server/` 解析，默认 `../web/dist` |
+| `DATA_DIR` | 导出音频等本地数据的落盘目录，默认 `generated` |
+
+针对云服务器的完整步骤（Node 24 安装、systemd 守护、防火墙放行、日常更新与排错、HTTPS 兜底）见 [`deploy/README.md`](deploy/README.md)。部署到公网前请先读该文档最后的「安全边界」。
+
 ## 当前状态
 
-这是可交互的功能 Demo：多轨管理、钢琴卷帘音符编辑、撤销/重做（带合并窗口）、音频片段的裁剪 / 移动 / 分割与淡入淡出增益、真实波形显示、工程本地存取，以及 MIDI / WAV / MP3 导出都已经落地，并由单元测试与 CI 兜底。多供应商 Provider Adapter（真实音乐、音效生成）与云端项目存储仍属于后续路线——本项目刻意不做登录与后端数据库。
+这是可交互的功能 Demo：多轨管理、钢琴卷帘音符编辑、撤销/重做（带合并窗口）、音频片段的裁剪 / 移动 / 分割与淡入淡出增益、真实波形显示、工程本地存取，以及 MIDI / WAV / MP3 导出都已经落地，并由单元测试与 CI 兜底。生产部署也已经是可用的单端口方案（`SERVE_WEB=1`，见 [`deploy/README.md`](deploy/README.md)）。多供应商 Provider Adapter（真实音乐、音效生成）与云端项目存储仍属于后续路线——本项目刻意不做登录与后端数据库。
