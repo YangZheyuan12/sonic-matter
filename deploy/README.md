@@ -62,6 +62,17 @@ ls /opt/sonic-matter          # 期望看到 server/  web/  deploy/
 
 > 用宝塔面板的「文件管理」直接拖拽上传也完全可以，效果一样。
 
+> **更省事的做法**：这个仓库本来就在服务器 owner 自己的 GitHub 上，那就在服务器上直接 clone 源码，只有前端产物需要我们单独发一个包（`web/dist` 是构建产物，不入库）：
+>
+> ```bash
+> git clone --depth 1 -b main https://github.com/YangZheyuan12/sonic-matter.git /tmp/sm-src
+> cp -r /tmp/sm-src/server /opt/sonic-matter/
+> mkdir -p /opt/sonic-matter/deploy && cp /tmp/sm-src/deploy/sonic-matter.service /opt/sonic-matter/deploy/
+> rm -rf /tmp/sm-src
+> ```
+>
+> 依赖清单一并带过来了（`server/package-lock.json` 在仓库里），第 4 节的 `npm ci` 照旧。
+
 ## 4. 安装后端依赖（走国内镜像）
 
 ```bash
