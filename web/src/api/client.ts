@@ -173,6 +173,38 @@ export async function apiFetch<T>(
   }
 }
 
+/** 任意方法 + 自定义请求头的 JSON 请求。
+ *  POST 走 apiFetch 就够；GET / PUT / DELETE 以及需要带自定义头（云端工程的 x-sonic-owner）时用这个。
+ *  错误信封的翻译逻辑和 apiFetch 完全共用，不重复实现。 */
+export async function apiJson<T>(
+  path: string,
+  options: ApiOptions & { method?: 'GET' | 'POST' | 'PUT' | 'DELETE'; body?: unknown; headers?: Record<string, string> } = {},
+): Promise<T> {
+  const { method = 'GET', body, headers = {}, ...rest } = options
+  const response = await send(
+    path,
+    {
+      method,
+      headers: { ...(body === undefined ? {} : { 'Content-Type': 'application/json' }), ...headers },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    },
+    rest,
+  )
+  if (!response.ok) throw await toApiError(response)
+  const text = await response.text()
+  if (!text.trim()) {
+    throw new ApiError('服务器返回了空响应，请确认后端已启动。', { code: 'bad_response', status: response.status })
+  }
+  try {
+    return JSON.parse(text) as T
+  } catch {
+    throw new ApiError(
+      `服务器返回的不是有效 JSON（HTTP ${response.status}）：${text.replace(/\s+/g, ' ').slice(0, 120)}`,
+      { code: 'bad_response', status: response.status },
+    )
+  }
+}
+
 /** POST JSON 并取回二进制（MIDI / WAV 之类的导出）。 */
 export async function apiFetchBlob(
   path: string,
