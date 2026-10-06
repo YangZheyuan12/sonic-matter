@@ -110,6 +110,8 @@ SERVE_WEB=1 PORT=8080 node src/index.ts   # Node 24 原生运行 TS 入口，生
 
 针对云服务器的完整步骤（Node 24 安装、systemd 守护、防火墙放行、日常更新与排错、HTTPS 兜底）见 [`deploy/README.md`](deploy/README.md)。部署到公网前请先读该文档最后的「安全边界」。
 
+如果服务器不是自己的、需要先征得 owner 同意，用 [`deploy/队友服务器操作步骤.md`](deploy/%E9%98%9F%E5%8F%8B%E6%9C%8D%E5%8A%A1%E5%99%A8%E6%93%8D%E4%BD%9C%E6%AD%A5%E9%AA%A4.md)：里面把"新增了什么 / 不动什么 / 占多少资源 / 怎么一键卸载"逐项写清，对方不用读代码就能判断。
+
 ## 当前状态
 
 这是可交互的功能 Demo：多轨管理、钢琴卷帘音符编辑、撤销/重做（带合并窗口）、音频片段的裁剪 / 移动 / 分割与淡入淡出增益、真实波形显示、工程本地存取，以及 MIDI / WAV / MP3 导出都已经落地，并由单元测试与 CI 兜底。生产部署也已经是可用的单端口方案（`SERVE_WEB=1`，见 [`deploy/README.md`](deploy/README.md)）。多供应商 Provider Adapter（真实音乐、音效生成）与云端项目存储仍属于后续路线——本项目刻意不做登录与后端数据库。
