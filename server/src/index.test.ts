@@ -9,6 +9,8 @@ process.env.OPENAI_API_KEY = ''
 process.env.SONIC_MATTER_TEST = '1'
 process.env.CORS_ORIGIN = 'http://allowed.example'
 process.env.JSON_BODY_LIMIT = '2kb'
+// 显式关掉前端静态托管，保证这里是“开发模式”的行为；SERVE_WEB=1 的场景在 webStatic.test.ts 覆盖。
+delete process.env.SERVE_WEB
 
 /** 真实应用的接口冒烟：直接拿 index.ts 导出的 app，不监听固定端口。
  *  http.ts 也要动态引入——CORS 白名单是模块级读环境变量的。 */
@@ -100,4 +102,11 @@ test('MIDI 导出仍然返回标准头 MThd', async () => {
   assert.equal(response.status, 200)
   const bytes = new Uint8Array(await response.arrayBuffer())
   assert.deepEqual(Array.from(bytes.slice(0, 4)), [0x4d, 0x54, 0x68, 0x64])
+})
+
+test('开发模式（未设 SERVE_WEB）不托管前端，根路径仍然走 404 错误信封', async () => {
+  const response = await fetch(`${base}/`)
+  assert.equal(response.status, 404)
+  const body = await response.json() as { code: string }
+  assert.equal(body.code, 'not_found')
 })

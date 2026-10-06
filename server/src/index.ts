@@ -3,6 +3,7 @@ import cors from 'cors'
 import express from 'express'
 import OpenAI from 'openai'
 import { z } from 'zod'
+import { existsSync } from 'node:fs'
 import { mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import crypto from 'node:crypto'
@@ -27,7 +28,11 @@ const port = Number(process.env.PORT ?? 8787)
 const envModel = process.env.OPENAI_MODEL ?? 'gpt-4.1-mini'
 const envBaseUrl = process.env.OPENAI_BASE_URL ?? 'https://api.openai.com/v1'
 const envProtocol = process.env.OPENAI_PROTOCOL === 'chat-completions' ? 'chat-completions' : 'responses'
-const generatedDir = path.resolve(process.cwd(), 'generated')
+/** 导出音频与后续本地数据的落盘目录；部署时用 DATA_DIR 指到数据盘，默认仍是 server/generated。 */
+const generatedDir = path.resolve(process.cwd(), process.env.DATA_DIR ?? 'generated')
+/** 生产部署（SERVE_WEB=1）用同一个端口托管前端构建产物，省掉 Nginx 和跨域配置。 */
+const webDistDir = path.resolve(process.cwd(), process.env.WEB_DIST_DIR ?? '../web/dist')
+const serveWeb = process.env.SERVE_WEB === '1'
 const replicateModel = process.env.MUSIC_REPLICATE_MODEL ?? 'meta/musicgen'
 
 app.use(requestContext())
@@ -305,6 +310,20 @@ app.post('/api/export/midi', asyncHandler(async (req, res) => {
     throw error
   }
 }))
+
+/**
+ * 生产模式用同一个端口同时提供前端页面和 API，浏览器看到的是同源请求，
+ * 不需要 Nginx、也不需要配置 CORS。
+ * 必须挂在所有 /api 路由之后、notFoundHandler 之前：静态目录里没有的文件会继续往后走。
+ */
+if (serveWeb) {
+  if (existsSync(webDistDir)) {
+    logger.info('已开启前端静态托管', { dir: webDistDir })
+    app.use(express.static(webDistDir))
+  } else {
+    logger.warn('SERVE_WEB=1 但前端构建产物目录不存在，请先执行 npm run build 并上传 web/dist', { dir: webDistDir })
+  }
+}
 
 app.use(notFoundHandler)
 app.use(errorHandler)
