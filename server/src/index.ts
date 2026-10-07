@@ -10,9 +10,10 @@ import crypto from 'node:crypto'
 import { buildMidiFile, MidiExportError } from './midi.ts'
 import { badRequest, isAbortError, isClientGone, providerNotConfigured, toAppError, zodDetail } from './errors.ts'
 import { logger } from './logger.ts'
-import { noteSchema, projectSchema, trackSchema } from './projectSchema.ts'
+import { noteSchema, projectSchema, soundDirectionSchema, trackSchema } from './projectSchema.ts'
 import { projectsRouter } from './projects.ts'
 import { ProjectStore } from './projectStore.ts'
+import { sfxDirectionPrompt, sfxGenerationDescription, type SoundDirectionInput } from './soundDirection.ts'
 import {
   agentTimeoutMs,
   allowedOrigins,
@@ -72,11 +73,11 @@ const editResponseSchema = z.object({ assistant_message: z.string().min(1).max(2
 
 const soundMixerSchema = z.object({ length: z.number().min(.1).max(30), density: z.number().min(0).max(100), brightness: z.number().min(0).max(100), space: z.number().min(0).max(100), compact: z.number().min(0).max(100) })
 const soundPlanSchema = z.object({ title: z.string().min(1).max(80), prompt: z.string().min(1).max(300), duration_seconds: z.number().min(.1).max(30), texture: z.string().min(1).max(80), envelope: z.string().min(1).max(80), space: z.string().min(1).max(80), events: z.array(z.object({ time: z.number().min(0).max(30), event: z.string().min(1).max(120) })).min(1).max(8) })
-const soundPlanInputSchema = z.object({ description: z.string().trim().min(1).max(500), mixer: soundMixerSchema }).merge(requestWithAgentSchema)
+const soundPlanInputSchema = z.object({ description: z.string().trim().min(1).max(500), mixer: soundMixerSchema, soundDirection: soundDirectionSchema.optional() }).merge(requestWithAgentSchema)
 const musicProviderSchema = z.object({ baseUrl: z.string().trim().url().optional(), apiKey: z.string().trim().max(500).optional(), model: z.string().trim().min(1).max(160).optional() }).optional()
 const sfxProviderSchema = z.object({ baseUrl: z.string().trim().url().optional(), apiKey: z.string().trim().max(500).optional(), model: z.string().trim().min(1).max(160).optional() }).optional()
 const musicGenerateInputSchema = z.object({ prompt: z.string().trim().min(1).max(1000), duration_seconds: z.number().min(1).max(30).default(10), music: musicProviderSchema })
-const soundGenerateInputSchema = z.object({ description: z.string().trim().min(1).max(500), mixer: soundMixerSchema, sfx: sfxProviderSchema })
+const soundGenerateInputSchema = z.object({ description: z.string().trim().min(1).max(500), mixer: soundMixerSchema, soundDirection: soundDirectionSchema.optional(), sfx: sfxProviderSchema })
 const musicPlanTrackSchema = z.object({
   id: z.string().min(1).max(40), name: z.string().min(1).max(60), instrument: z.string().min(1).max(40), color: z.string().min(1).max(20),
   notes: z.array(noteSchema).min(1).max(128),
@@ -158,7 +159,7 @@ function fallbackMusicPlan(project: z.infer<typeof projectSchema>): z.infer<type
   const tracks = source.length ? source.map((track, index) => ({ id: `ai-structure-${index + 1}`, name: `${track.name} · 结构化`, instrument: track.instrument, color: track.color, notes: (track.notes ?? []).slice(0, 128) })) : [{ id: 'ai-structure-1', name: '结构化旋律', instrument: 'Synth', color: '#7dd3fc', notes: [{ id: 'generated-1', pitch: 60, start: 0, duration: 0.5, velocity: 90 }, { id: 'generated-2', pitch: 64, start: 0.75, duration: 0.5, velocity: 82 }, { id: 'generated-3', pitch: 67, start: 1.5, duration: 0.75, velocity: 88 }] }]
   return { title: `${project.title} · 结构化草案`, tempo: project.tempo, key: project.key, duration: Math.min(30, project.duration ?? 10), tracks }
 }
-function fallbackSound(description: string, mixer: z.infer<typeof soundMixerSchema>): z.infer<typeof soundPlanSchema> { return { title: 'Semantic Sound Sketch', prompt: `${description}; density ${mixer.density}%; brightness ${mixer.brightness}%; spaciousness ${mixer.space}%; compactness ${mixer.compact}%`, duration_seconds: mixer.length, texture: mixer.brightness > 60 ? 'bright granular transient' : 'dark granular transient', envelope: mixer.compact > 60 ? 'tight attack, short decay' : 'soft attack, long tail', space: mixer.space > 60 ? 'wide underwater reverb' : 'near-field dry room', events: [{ time: 0, event: 'distant onset' }, { time: Math.max(.1, mixer.length * .42), event: 'textural rupture' }, { time: Math.max(.2, mixer.length * .78), event: 'resonant tail' }] } }
+function fallbackSound(description: string, mixer: z.infer<typeof soundMixerSchema>, direction?: SoundDirectionInput): z.infer<typeof soundPlanSchema> { return { title: 'Semantic Sound Sketch', prompt: `${description}; ${direction?.sfxStyle.join(', ') || 'default'}; density ${mixer.density}%; brightness ${mixer.brightness}%; spaciousness ${mixer.space}%; compactness ${mixer.compact}%`, duration_seconds: mixer.length, texture: mixer.brightness > 60 ? 'bright granular transient' : 'dark granular transient', envelope: mixer.compact > 60 ? 'tight attack, short decay' : 'soft attack, long tail', space: mixer.space > 60 ? 'wide underwater reverb' : 'near-field dry room', events: [{ time: 0, event: 'distant onset' }, { time: Math.max(.1, mixer.length * .42), event: 'textural rupture' }, { time: Math.max(.2, mixer.length * .78), event: 'resonant tail' }] } }
 function requiredSecret(name: string) {
   const value = process.env[name]
   if (!value) throw new Error(`${name}_MISSING`)
@@ -201,13 +202,13 @@ async function generateWithReplicate(prompt: string, durationSeconds: number, co
   return downloadGeneratedAudio(output, 'wav', signal)
 }
 
-async function generateWithElevenLabs(description: string, mixer: z.infer<typeof soundMixerSchema>, config?: { baseUrl?: string; apiKey?: string; model?: string }, signal?: AbortSignal) {
+async function generateWithElevenLabs(description: string, mixer: z.infer<typeof soundMixerSchema>, direction?: SoundDirectionInput, config?: { baseUrl?: string; apiKey?: string; model?: string }, signal?: AbortSignal) {
   const apiKey = config?.apiKey || requiredSecret('ELEVENLABS_API_KEY')
   const baseUrl = (config?.baseUrl || 'https://api.elevenlabs.io/v1').replace(/\/$/, '')
   const response = await fetchWithRetry(`${baseUrl}/sound-generation`, {
     method: 'POST',
     headers: { 'xi-api-key': apiKey, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text: `${description}. Duration ${mixer.length} seconds. Density ${mixer.density} percent. Brightness ${mixer.brightness} percent. Spaciousness ${mixer.space} percent. Compactness ${mixer.compact} percent.` }),
+    body: JSON.stringify({ text: `${sfxGenerationDescription(description, direction)}. Duration ${mixer.length} seconds. Density ${mixer.density} percent. Brightness ${mixer.brightness} percent. Spaciousness ${mixer.space} percent. Compactness ${mixer.compact} percent.` }),
   }, { label: '音效生成', signal })
   if (!response.ok) throw new Error(`ELEVENLABS_GENERATE_${response.status}`)
   const buffer = Buffer.from(await response.arrayBuffer())
@@ -254,12 +255,12 @@ app.post('/api/project/edit', asyncHandler(async (req, res) => {
 app.post('/api/sfx/plan', asyncHandler(async (req, res) => {
   const parsed = soundPlanInputSchema.safeParse(req.body)
   if (!parsed.success) throw badRequest('音效描述或调音台参数不正确。', zodDetail(parsed.error))
-  const { description, mixer, agent } = parsed.data
+  const { description, mixer, soundDirection, agent } = parsed.data
   try {
-    const result = await structuredResponse(['你是音效设计 Agent。请把声音描述和调音台参数转换为一个可交给音效生成模型的结构化声音计划。', '不要返回音频二进制，只返回 JSON。', `描述：${description}`, `调音台：${JSON.stringify(mixer)}`].join('\n'), 'sound_design_plan', soundJsonSchema, soundPlanSchema, resolveAgentConfig(agent), req.abortSignal)
+    const result = await structuredResponse(['你是音效设计 Agent。请把声音描述和调音台参数转换为一个可交给音效生成模型的结构化声音计划。', '不要返回音频二进制，只返回 JSON。', `描述：${description}`, sfxDirectionPrompt(soundDirection), `调音台：${JSON.stringify(mixer)}`].join('\n'), 'sound_design_plan', soundJsonSchema, soundPlanSchema, resolveAgentConfig(agent), req.abortSignal)
     return res.json({ ...result, source: 'agent' })
   } catch (error) {
-    if (isNotConfigured(error)) return res.json({ ...fallbackSound(description, mixer), source: 'fallback', warning: '未配置 API Key，当前使用本地声音计划。' })
+    if (isNotConfigured(error)) return res.json({ ...fallbackSound(description, mixer, soundDirection), source: 'fallback', warning: '未配置 API Key，当前使用本地声音计划。' })
     throw error
   }
 }))
@@ -294,7 +295,7 @@ app.post('/api/music/generate', asyncHandler(async (req, res) => {
 app.post('/api/sfx/generate', asyncHandler(async (req, res) => {
   const parsed = soundGenerateInputSchema.safeParse(req.body)
   if (!parsed.success) throw badRequest('音效描述或调音台参数不正确。', zodDetail(parsed.error))
-  const generated = await generateWithElevenLabs(parsed.data.description, parsed.data.mixer, parsed.data.sfx, req.abortSignal)
+  const generated = await generateWithElevenLabs(parsed.data.description, parsed.data.mixer, parsed.data.soundDirection, parsed.data.sfx, req.abortSignal)
   return res.json({ ...generated, provider: 'elevenlabs', source: 'audio-model' })
 }))
 

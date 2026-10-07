@@ -50,6 +50,22 @@ test('概念解析在没有 Key 时返回本地 fallback 的三个视角', async
   assert.equal(body.interpretations.length, 3)
 })
 
+test('音效计划接收项目声音方向，并在 fallback 计划中保留音效风格', async () => {
+  const response = await post('/api/sfx/plan', JSON.stringify({
+    description: '石门缓慢开启',
+    mixer: { length: 2.4, density: 42, brightness: 64, space: 78, compact: 35 },
+    soundDirection: {
+      musicStyle: ['ambient'], musicMood: ['mysterious'], primaryInstruments: ['Piano'], secondaryInstruments: [],
+      rhythmIntensity: 20, melodicDensity: 30, ambienceLevel: 85, sfxStyle: ['organic', 'cinematic'], selectedDemos: ['underwater ruins'],
+    },
+    agent: { apiKey: '' },
+  }))
+  assert.equal(response.status, 200)
+  const body = await response.json() as { source: string; prompt: string }
+  assert.equal(body.source, 'fallback')
+  assert.match(body.prompt, /organic, cinematic/)
+})
+
 test('坏 JSON 与不合法入参都是 400，并且带上 requestId', async () => {
   const malformed = await post('/api/concept/interpret', '{"concept":')
   assert.equal(malformed.status, 400)
