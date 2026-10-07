@@ -58,12 +58,18 @@ test('音效计划接收项目声音方向，并在 fallback 计划中保留音�
       musicStyle: ['ambient'], musicMood: ['mysterious'], primaryInstruments: ['Piano'], secondaryInstruments: [],
       rhythmIntensity: 20, melodicDensity: 30, ambienceLevel: 85, sfxStyle: ['organic', 'cinematic'], selectedDemos: ['underwater ruins'],
     },
+    gameBrief: {
+      title: '海底遗迹', genre: '探索解谜', gameplay: '潜入遗迹寻找机关', world: '被潮汐覆盖的古文明', references: [],
+      scenes: [{ id: 'hall', name: '沉没大厅', description: '空旷石质空间', moods: ['神秘'] }],
+      events: [{ id: 'gate', name: '石门开启', description: '古老机关启动', category: '机关' }],
+    },
     agent: { apiKey: '' },
   }))
   assert.equal(response.status, 200)
   const body = await response.json() as { source: string; prompt: string }
   assert.equal(body.source, 'fallback')
   assert.match(body.prompt, /organic, cinematic/)
+  assert.match(body.prompt, /海底遗迹/)
 })
 
 test('坏 JSON 与不合法入参都是 400，并且带上 requestId', async () => {
