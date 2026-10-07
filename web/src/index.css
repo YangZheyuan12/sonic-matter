@@ -222,6 +222,16 @@
 @media(max-width:980px){.clip-inspector{grid-template-columns:repeat(3,minmax(0,1fr))}}
 @media(max-width:620px){.clip-inspector{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.clip-actions{grid-column:1/-1;justify-content:flex-start}}
 
+/* 产品级工作区入口：Game Brief 内部保留旧功能，Sound Direction 先作为职责占位。 */
+.workspace-tabs{display:flex;gap:6px;margin:0 0 20px;padding:4px;border:1px solid var(--line);border-radius:8px;background:rgba(10,12,31,.52);width:max-content}
+.workspace-tabs button{padding:8px 14px;border:0;border-radius:5px;background:transparent;color:var(--muted);font-size:11px;cursor:pointer}
+.workspace-tabs button.active{background:rgba(125,211,252,.14);color:var(--cyan)}
+.direction-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.direction-note{max-width:42rem;color:var(--muted);line-height:1.8}
+.direction-page .buttons{margin-top:24px}
+.my-page .settings-page{margin:0}
+@media(max-width:760px){.direction-grid{grid-template-columns:1fr}.workspace-tabs{width:100%}.workspace-tabs button{flex:1}}
+
 
 /* 音效页波形：柱高来自真实音频峰值（previewWaveform / waveformPeaksFor） */
 .wave i{min-height:3px;transition:height .18s ease}

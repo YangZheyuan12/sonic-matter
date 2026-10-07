@@ -5,11 +5,11 @@ export type NavigationItem = {
   label: string
 }
 
-/** Current product navigation, centralized so the game-audio workflow can replace it in one place. */
+/** Product-level navigation; legacy feature views live inside these workspaces. */
 export const NAVIGATION_ITEMS: readonly NavigationItem[] = [
-  { page: 'explore', label: '灵感空间' },
-  { page: 'concept', label: '万物声谱' },
-  { page: 'studio', label: '音乐工作室' },
-  { page: 'sound', label: '音效实验室' },
-  { page: 'settings', label: '设置' },
+  { page: 'brief', label: 'Game Brief' },
+  { page: 'direction', label: 'Sound Direction' },
+  { page: 'studio', label: 'Music Studio' },
+  { page: 'sfx', label: 'SFX Lab' },
+  { page: 'my', label: 'My' },
 ]

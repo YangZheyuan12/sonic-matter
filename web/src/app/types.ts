@@ -1,6 +1,7 @@
 import type { Story, Track } from '../project/model'
 
-export type Page = 'explore' | 'concept' | 'studio' | 'sound' | 'settings'
+export type Page = 'brief' | 'direction' | 'studio' | 'sfx' | 'my'
+export type BriefSection = 'inspiration' | 'understanding'
 
 export type ConceptId = 'physical' | 'psychological' | 'climate'
 
