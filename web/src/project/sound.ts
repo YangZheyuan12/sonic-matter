@@ -11,6 +11,11 @@ export type SoundDirection = {
   selectedDemos: string[]
 }
 
+/** 多选标签统一使用这个纯函数，保证取消选择和重复点击行为一致。 */
+export function toggleSoundDirectionChoice(values: string[], choice: string): string[] {
+  return values.includes(choice) ? values.filter(value => value !== choice) : [...values, choice]
+}
+
 /** 试听素材只作为选择参考，不属于任何一个 Project。 */
 export type DemoClip = {
   id: string

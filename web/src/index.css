@@ -229,8 +229,11 @@
 .direction-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
 .direction-note{max-width:42rem;color:var(--muted);line-height:1.8}
 .direction-page .buttons{margin-top:24px}
+.direction-context{display:flex;align-items:end;justify-content:space-between;gap:16px;margin:-4px 0 18px;padding:14px 16px;border:1px solid rgba(125,211,252,.22);border-radius:8px;background:rgba(10,12,31,.42)}
+.direction-context small,.direction-context strong{display:block}.direction-context small{color:var(--muted);font-size:9px;letter-spacing:.16em}.direction-context strong{margin-top:5px;font-size:14px;font-weight:500}.direction-context>span{color:var(--cyan);font-size:10px}
+.direction-editor{display:grid;grid-template-columns:1.2fr .8fr;gap:16px}.direction-choice{padding:14px 0;border-bottom:1px solid rgba(185,192,255,.1)}.direction-choice>span{display:block;margin-bottom:9px;color:var(--muted);font-size:11px}.choice-list{display:flex;flex-wrap:wrap;gap:7px}.choice{padding:7px 10px;border:1px solid var(--line);border-radius:999px;background:rgba(255,255,255,.035);color:var(--muted);font-size:10px;cursor:pointer}.choice:hover{border-color:rgba(125,211,252,.55);color:#fff}.choice.active{border-color:rgba(125,211,252,.75);background:rgba(125,211,252,.14);color:var(--cyan)}.direction-range{padding:14px 0 0}.direction-range label{display:flex;justify-content:space-between;color:var(--muted);font-size:11px}.direction-range output{color:var(--cyan);font:10px ui-monospace,monospace}.direction-range input{width:100%;margin-top:8px;accent-color:var(--cyan)}.direction-summary{margin-top:20px;padding:14px;border:1px solid rgba(167,139,250,.25);border-radius:8px;background:rgba(57,44,112,.14)}.direction-summary strong{font-size:12px}.direction-summary p{min-height:24px;margin:8px 0;color:var(--cyan);font-size:11px;line-height:1.6}.direction-summary small{color:var(--muted);font-size:10px;line-height:1.5}.direction-actions{display:flex;flex-wrap:wrap;gap:9px;margin-top:20px}.direction-actions button{margin:0}
 .my-page .settings-page{margin:0}
-@media(max-width:760px){.direction-grid{grid-template-columns:1fr}.workspace-tabs{width:100%}.workspace-tabs button{flex:1}}
+@media(max-width:760px){.direction-grid,.direction-editor{grid-template-columns:1fr}.workspace-tabs{width:100%}.workspace-tabs button{flex:1}.direction-context{align-items:flex-start;flex-direction:column}}
 
 
 /* 音效页波形：柱高来自真实音频峰值（previewWaveform / waveformPeaksFor） */
