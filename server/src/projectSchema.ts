@@ -42,6 +42,82 @@ export const trackSchema = z.object({
   start: z.number().min(0).max(120).optional(),
 })
 
+const sceneBriefSchema = z.object({
+  id: z.string().min(1).max(80),
+  name: z.string().max(120),
+  description: z.string().max(800),
+  moods: z.array(z.string().max(60)).max(12).optional(),
+})
+
+const eventBriefSchema = z.object({
+  id: z.string().min(1).max(80),
+  name: z.string().max(120),
+  description: z.string().max(800),
+  category: z.string().max(80).optional(),
+})
+
+export const gameBriefSchema = z.object({
+  title: z.string().max(120),
+  genre: z.string().max(120),
+  gameplay: z.string().max(2000),
+  world: z.string().max(2000),
+  references: z.array(z.string().max(160)).max(12),
+  scenes: z.array(sceneBriefSchema).max(32),
+  events: z.array(eventBriefSchema).max(64),
+})
+
+const musicDirectionSchema = z.object({
+  id: z.string().min(1).max(80),
+  title: z.string().max(120),
+  summary: z.string().max(800),
+  moods: z.array(z.string().max(60)).max(12),
+  suitableScenes: z.array(z.string().max(120)).max(16),
+  recommendedInstruments: z.array(z.string().max(80)).max(24),
+  demoIds: z.array(z.string().max(120)).max(24).optional(),
+})
+
+const sfxDirectionSchema = z.object({
+  id: z.string().min(1).max(80),
+  title: z.string().max(120),
+  summary: z.string().max(800),
+  tags: z.array(z.string().max(60)).max(12),
+  demoIds: z.array(z.string().max(120)).max(24).optional(),
+})
+
+export const gameAnalysisSchema = z.object({
+  summary: z.string().max(2000),
+  moods: z.array(z.string().max(60)).max(16),
+  musicDirections: z.array(musicDirectionSchema).max(8),
+  sfxDirections: z.array(sfxDirectionSchema).max(8),
+  recommendedInstruments: z.array(z.string().max(80)).max(32),
+  recommendedMaterials: z.array(z.string().max(80)).max(32),
+  avoidDirections: z.array(z.string().max(160)).max(24),
+})
+
+export const soundDirectionSchema = z.object({
+  musicStyle: z.array(z.string().max(80)).max(12),
+  musicMood: z.array(z.string().max(80)).max(12),
+  primaryInstruments: z.array(z.string().max(80)).max(16),
+  secondaryInstruments: z.array(z.string().max(80)).max(24),
+  rhythmIntensity: z.number().min(0).max(100),
+  melodicDensity: z.number().min(0).max(100),
+  ambienceLevel: z.number().min(0).max(100),
+  sfxStyle: z.array(z.string().max(80)).max(12),
+  selectedDemos: z.array(z.string().max(120)).max(32),
+})
+
+export const projectAssetSchema = z.object({
+  id: z.string().min(1).max(80),
+  title: z.string().max(160),
+  kind: z.enum(['music', 'sfx', 'ambience', 'voice']),
+  origin: z.enum(['generated', 'uploaded', 'recorded']),
+  status: z.enum(['draft', 'confirmed', 'archived']),
+  source: z.string().max(24000),
+  createdAt: z.number().min(0),
+  sceneId: z.string().max(80).optional(),
+  eventId: z.string().max(80).optional(),
+})
+
 export const projectSchema = z.object({
   title: z.string().min(1).max(120),
   tempo: z.number().min(20).max(300),
@@ -58,5 +134,10 @@ export const projectSchema = z.object({
       color: z.string().max(32),
     })).max(24),
   }).optional(),
+  gameBrief: gameBriefSchema.optional(),
+  gameAnalysis: gameAnalysisSchema.optional(),
+  soundDirection: soundDirectionSchema.optional(),
+  assets: z.array(projectAssetSchema).max(128).optional(),
+  currentSceneId: z.string().max(80).optional(),
   tracks: z.array(trackSchema).min(1).max(32),
 })

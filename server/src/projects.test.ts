@@ -121,6 +121,21 @@ test('列表只给元信息，并且按浏览器身份隔离', async () => {
   assert.deepEqual(strangerBody.projects.map(item => item.title), ['B 的工程'])
 })
 
+test('云端工程保存和打开会保留游戏音频上下文', async () => {
+  const project = {
+    ...projectOf('上下文往返'),
+    gameBrief: { title: '海底遗迹', genre: '探索解谜', gameplay: '寻找线索', world: '水下古城', references: [], scenes: [{ id: 'ruins', name: '遗迹', description: '夜晚遗迹' }], events: [] },
+    soundDirection: { musicStyle: ['空旷神秘'], musicMood: ['神秘'], primaryInstruments: ['钢琴'], secondaryInstruments: [], rhythmIntensity: 20, melodicDensity: 30, ambienceLevel: 80, sfxStyle: ['写实自然'], selectedDemos: [] },
+  }
+  const saved = await save(OWNER_A, project)
+  assert.equal(saved.status, 201)
+  const opened = await call(`/api/projects/${saved.body.id}`)
+  assert.equal(opened.status, 200)
+  const body = await opened.json() as { project: typeof project }
+  assert.equal(body.project.gameBrief.scenes[0].id, 'ruins')
+  assert.equal(body.project.soundDirection.ambienceLevel, 80)
+})
+
 test('覆盖保存会递增版本号，createdAt 不变', async () => {
   const saved = await save(OWNER_A, projectOf('要改的工程', 2))
   const updated = await call(`/api/projects/${saved.body.id}`, { owner: OWNER_A, method: 'PUT', body: { project: projectOf('改过标题', 3) } })

@@ -39,6 +39,59 @@ test('前端多塞的未知字段会被剥掉，不会让请求 400', () => {
   assert.equal('somethingNew' in parsed, false)
   assert.equal(parsed.tracks[0].clips?.length, 1)
 })
+
+test('游戏音频上下文可以通过工程 Schema 并被保留', () => {
+  const parsed = projectSchema.parse({
+    ...project([audioTrack()]),
+    gameBrief: {
+      title: '海底遗迹',
+      genre: '探索解谜',
+      gameplay: '寻找线索',
+      world: '被海水吞没的古城',
+      references: ['作品 A'],
+      scenes: [{ id: 'ruins', name: '遗迹', description: '夜晚遗迹', moods: ['神秘'] }],
+      events: [{ id: 'door', name: '石门打开', description: '沉重的石门开启', category: '机关' }],
+    },
+    gameAnalysis: {
+      summary: '安静、神秘',
+      moods: ['神秘'],
+      musicDirections: [{ id: 'wide', title: '空旷神秘', summary: '留白较多', moods: ['神秘'], suitableScenes: ['遗迹'], recommendedInstruments: ['Pad'] }],
+      sfxDirections: [{ id: 'natural', title: '写实自然', summary: '克制', tags: ['水下'] }],
+      recommendedInstruments: ['钢琴'],
+      recommendedMaterials: ['石材'],
+      avoidDirections: ['过度明亮'],
+    },
+    soundDirection: {
+      musicStyle: ['空旷神秘'],
+      musicMood: ['神秘'],
+      primaryInstruments: ['钢琴'],
+      secondaryInstruments: ['Pad'],
+      rhythmIntensity: 20,
+      melodicDensity: 35,
+      ambienceLevel: 85,
+      sfxStyle: ['写实自然'],
+      selectedDemos: ['demo-wide'],
+    },
+    assets: [{ id: 'sfx-1', title: '石门开启', kind: 'sfx', origin: 'generated', status: 'confirmed', source: '/generated/door.wav', createdAt: 123, sceneId: 'ruins', eventId: 'door' }],
+    currentSceneId: 'ruins',
+  })
+
+  assert.equal(parsed.gameBrief?.scenes[0].id, 'ruins')
+  assert.equal(parsed.gameAnalysis?.musicDirections[0].title, '空旷神秘')
+  assert.equal(parsed.soundDirection?.ambienceLevel, 85)
+  assert.equal(parsed.assets?.[0].source, '/generated/door.wav')
+  assert.equal(parsed.currentSceneId, 'ruins')
+})
+
+test('游戏音频上下文的数组和文本上限生效', () => {
+  const base = project([audioTrack()])
+  const brief = {
+    title: 'x', genre: 'x', gameplay: 'x', world: 'x', references: [], scenes: [], events: [],
+  }
+  assert.equal(projectSchema.safeParse({ ...base, gameBrief: { ...brief, references: Array.from({ length: 13 }, () => 'x') } }).success, false)
+  assert.equal(projectSchema.safeParse({ ...base, soundDirection: { musicStyle: [], musicMood: [], primaryInstruments: [], secondaryInstruments: [], rhythmIntensity: 101, melodicDensity: 0, ambienceLevel: 0, sfxStyle: [], selectedDemos: [] } }).success, false)
+  assert.equal(projectSchema.safeParse({ ...base, assets: Array.from({ length: 129 }, (_, index) => ({ id: `a-${index}`, title: 'x', kind: 'sfx', origin: 'generated', status: 'draft', source: '/generated/x.wav', createdAt: 0 })) }).success, false)
+})
 test('字符串与数组都有上限，挡住整包塞爆请求体的做法', () => {
   assert.equal(projectSchema.safeParse(project([audioTrack({ name: 'x'.repeat(121) })])).success, false)
   assert.equal(projectSchema.safeParse(project([audioTrack({ instrument: 'x'.repeat(61) })])).success, false)
@@ -56,4 +109,3 @@ test('字符串与数组都有上限，挡住整包塞爆请求体的做法', ()
   assert.equal(projectSchema.safeParse(project([audioTrack({ name: 'x'.repeat(120) })])).success, true)
   assert.equal(trackSchema.safeParse(audioTrack({ clips: undefined, clip: 'local-sfx:' + 'a'.repeat(9000) })).success, true)
 })
-
