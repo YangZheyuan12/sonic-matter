@@ -1,5 +1,5 @@
 [Unit]
-Description=Sonic Matter (前端 + API 单端口服务)
+Description=Sonic Matter (Node 8088 upstream for Nginx)
 Documentation=file:/opt/sonic-matter/deploy/README.md
 After=network-online.target
 Wants=network-online.target
@@ -15,7 +15,7 @@ EnvironmentFile=-/opt/sonic-matter/server/.env
 # 部署参数：为清晰起见这里显式写一遍，同时请让 deploy/README.md 里的 .env 保持一致
 # （systemd 中 EnvironmentFile 的优先级高于 Environment=，两边写成同一个值最省心）。
 Environment=NODE_ENV=production
-Environment=PORT=8080
+Environment=PORT=8088
 Environment=SERVE_WEB=1
 Environment=WEB_DIST_DIR=/opt/sonic-matter/web/dist
 Environment=PROJECTS_DIR=/opt/sonic-matter/server/projects

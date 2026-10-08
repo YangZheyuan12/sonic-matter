@@ -1,5 +1,7 @@
 import { emptyGameDefinition, normalizeGameDefinition, type GameDefinition } from './gameDefinition.ts'
 
+export const DEFAULT_PROJECT_TITLE = '生成你的BGM'
+
 export type Note = {
   id: string
   pitch: number

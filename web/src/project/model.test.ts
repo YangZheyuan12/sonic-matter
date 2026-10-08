@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  DEFAULT_PROJECT_TITLE,
   LOCAL_SOUND_CLIP_PREFIX,
   audibleTracks,
   isPlayableClip,
@@ -49,6 +50,10 @@ const project = (tracks: Track[], extra: Partial<Project> = {}): Project => ({
   masterGain: 0.9,
   tracks,
   ...extra,
+})
+
+test('默认工程标题描述音乐工作室的创作目标', () => {
+  assert.equal(DEFAULT_PROJECT_TITLE, '生成你的BGM')
 })
 
 test('projectDuration 默认 10 秒，并钳制在 1-120 秒之间', () => {

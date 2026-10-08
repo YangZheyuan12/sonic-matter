@@ -1,6 +1,6 @@
 # Sonic / Matter · 前端
 
-React 19 + TypeScript + Vite 的前端工程，负责四个页面（灵感空间 / 万物声谱 / 音乐工作室 / 音效实验室）、
+React 19 + TypeScript + Vite 的前端工程，负责四个页面（首页 / 定义你的游戏 / 音乐工作室 / 音效实验室）、
 钢琴卷帘编辑、Web Audio 本地渲染，以及 WAV / MP3 导出。`/api` 与 `/generated` 由 Vite 代理到后端 `http://localhost:8787`。
 
 ## 启动

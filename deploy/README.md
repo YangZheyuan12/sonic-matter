@@ -1,234 +1,161 @@
-# 部署到公网服务器（单端口方案）
+# Sonic / Matter 线上部署与更新
 
-把本机 Demo 变成"别人打开网址就能用"的线上服务。当前赛期内的目标机器是一台**阿里云华南 2 核 1.8G / Alibaba Cloud Linux 3**，上面已经装了宝塔面板，因此方案刻意选择**改动最小**的方式。
-
-> 如果要把这份文档发给**服务器 owner**（说明"会在她服务器上做什么、需要她做什么"），用更适合非执行者阅读的版本：[`队友服务器操作步骤.md`](%E9%98%9F%E5%8F%8B%E6%9C%8D%E5%8A%A1%E5%99%A8%E6%93%8D%E4%BD%9C%E6%AD%A5%E9%AA%A4.md)。本文档是执行细节，那份是"改动清单 + 资源占用 + 一键卸载"。
-> 如果对方想先看「你们现在做到哪了、我需要回什么数据」，用 [`给队友的交接说明.md`](%E7%BB%99%E9%98%9F%E5%8F%8B%E7%9A%84%E4%BA%A4%E6%8E%A5%E8%AF%B4%E6%98%8E.md)（现状 + 待办 + 回执模板）。
-
-## 0. 目标形态
+当前生产环境：
 
 ```text
-http://<公网IP>:8080/             → web/dist 静态文件（由 Node 服务直接托管）
-http://<公网IP>:8080/api/*        → 后端接口
-http://<公网IP>:8080/generated/*  → 导出的音频文件
+http://8.141.109.141/          -> Nginx :80 -> Node :8088
+http://8.141.109.141:8088/     -> Node 直连（排错备用）
+/api/*                         -> 同一个 Node 进程
+/generated/*                   -> server/generated
+云端工程                       -> server/projects/projects.db
 ```
 
-只开 **一个端口、一个进程**，原因是：
+服务器为 Alibaba Cloud Linux 3，应用目录为 `/opt/sonic-matter`，systemd 服务名为 `sonic-matter`。Node 进程同时托管 `web/dist` 与 API，Nginx 只负责把默认 HTTP 入口反代到 8088。
 
-- **不装 Nginx、不配反向代理**：`SERVE_WEB=1` 时后端会用 `express.static` 托管 `web/dist`，前端与 API 同源，连 CORS 都不用配。
-- **不用 80/443**：大陆服务器的域名要 ICP 备案才能用这两个端口；用 IP + 高位端口（8080）不受影响，赛期内可以直接访问。
-- **不用 Docker**：机器上虽然有 Docker，但拉镜像慢、还多占内存；直接跑 Node 进程更简单。
-- **不碰宝塔/MySQL**：宝塔的 Nginx 占着 80 和 888、MySQL 占 3306，我们只用 8080，服务崩了也不会影响同机的其它进程（unit 里有 `MemoryMax=512M` 保险）。
+## 安全边界
 
-> 前端是单页应用、没有路由库，工程分享走 `?p=<id>` 查询参数，所以**不需要 SPA fallback**：静态目录里没有的文件就是 404。
+- 不要提交或覆盖服务器的 `server/.env`，其中可能包含密钥和部署路径。
+- 更新前备份 `server/projects/projects.db`，它保存 SQLite 云端工程。
+- `server/generated` 与 `server/projects` 都是运行时数据，更新源码时不能删除。
+- 当前没有正式账号认证。分享链接可公开读取；写入权限依赖浏览器本地 owner 串。
+- 公网服务没有通用限流，不应把服务器 API Key 暴露给不受信任的访客。
 
-## 1. 前置：在本地构建前端
+## 首次部署
 
-服务器只有 1.8G 内存，**不要在服务器上跑 `vite build`**（容易 OOM）。在本地仓库根目录：
-
-```powershell
-npm ci --prefix server ; npm ci --prefix web
-npm run build          # 产出 web/dist（约 500 KB + 音色文件）
-```
-
-## 2. 安装 Node 24（官方 tar.gz，不依赖 dnf）
-
-Ubuntu/Anolis 自带的 Node 版本太老，且项目运行 `node --test` 依赖 Node 自带的 TypeScript 支持，所以直接解压官方包到 `/opt/sonic-matter/node`：
+### 1. 准备源码与依赖
 
 ```bash
-curl -fsSL -o /tmp/node24.tar.gz https://npmmirror.com/mirrors/node/v24.20.0/node-v24.20.0-linux-x64.tar.gz
-mkdir -p /opt/sonic-matter
-tar -xzf /tmp/node24.tar.gz -C /opt/sonic-matter
-mv /opt/sonic-matter/node-v24.20.0-linux-x64 /opt/sonic-matter/node
-/opt/sonic-matter/node/bin/node -v     # 期望输出 v24.20.0
-```
-
-`npmmirror.com`（淘宝镜像）对大陆机器速度正常，已实测可达；如果下载失败可以换成 `https://nodejs.org/dist/...`。
-
-## 3. 上传代码
-
-在本地仓库根目录打包源码（排除依赖与构建产物），再上传：
-
-```powershell
-tar --exclude=server/node_modules --exclude=web/node_modules --exclude=web/dist --exclude=server/generated --exclude=_tmp -czf $env:TEMP\sonic-matter-src.tgz server web deploy package.json README.md AGENTS.md .nvmrc
-scp $env:TEMP\sonic-matter-src.tgz root@<公网IP>:/tmp/
-```
-
-服务器上解压：
-
-```bash
-tar -xzf /tmp/sonic-matter-src.tgz -C /opt/sonic-matter
-ls /opt/sonic-matter          # 期望看到 server/  web/  deploy/
-```
-
-> 用宝塔面板的「文件管理」直接拖拽上传也完全可以，效果一样。
-
-> **更省事的做法**：这个仓库本来就在服务器 owner 自己的 GitHub 上，那就在服务器上直接 clone 源码，只有前端产物需要我们单独发一个包（`web/dist` 是构建产物，不入库）：
->
-> ```bash
-> git clone --depth 1 -b main https://github.com/YangZheyuan12/sonic-matter.git /tmp/sm-src
-> cp -r /tmp/sm-src/server /opt/sonic-matter/
-> mkdir -p /opt/sonic-matter/deploy && cp /tmp/sm-src/deploy/sonic-matter.service /opt/sonic-matter/deploy/
-> rm -rf /tmp/sm-src
-> ```
->
-> 依赖清单一并带过来了（`server/package-lock.json` 在仓库里），第 4 节的 `npm ci` 照旧。
-
-## 4. 安装后端依赖（走国内镜像）
-
-```bash
+git clone https://github.com/YangZheyuan12/sonic-matter.git /opt/sonic-matter
 cd /opt/sonic-matter/server
-/opt/sonic-matter/node/bin/npm ci --registry=https://registry.npmmirror.com --omit=dev
+/opt/sonic-matter/node/bin/npm ci --omit=dev
 ```
 
-- `--omit=dev`：不装 tsx / typescript —— 生产环境用 `node src/index.ts`（Node 原生的类型剥离）直接运行，用不到它们。类型检查和测试在本地与 CI 里跑。
-- 装完可以确认一下：`du -sh /opt/sonic-matter/server/node_modules`（约 20 MB 级）。
+Node 版本须为 24；项目可直接用 Node 原生类型剥离运行 `server/src/index.ts`。
 
-## 5. 写 `.env`
+### 2. 构建前端
+
+服务器内存不足时在本地执行 `npm run build --prefix web`，再把整个 `web/dist` 上传到 `/opt/sonic-matter/web/dist`。服务器资源允许时也可直接构建：
 
 ```bash
-cd /opt/sonic-matter/server
-cp .env.example .env
-vi .env
-chmod 600 .env        # 里面可能有 API Key，只给 root 读
+cd /opt/sonic-matter/web
+/opt/sonic-matter/node/bin/npm ci
+/opt/sonic-matter/node/bin/npm run build
 ```
 
-**这次部署请确保 `.env` 里有这四行**（与 systemd unit 保持一致，避免两边不一致时互相覆盖）：
+### 3. 服务配置
+
+`server/.env` 至少包含：
 
 ```ini
-PORT=8080
+PORT=8088
 SERVE_WEB=1
 WEB_DIST_DIR=/opt/sonic-matter/web/dist
 DATA_DIR=/opt/sonic-matter/server/generated
+PROJECTS_DIR=/opt/sonic-matter/server/projects
 ```
 
-**关于 API Key（重要）**：
-
-- **推荐不填**：`OPENAI_API_KEY` / `REPLICATE_API_TOKEN` / `ELEVENLABS_API_KEY` 全部留空。后端支持"每个请求自带 Key"，访客在「设置」里填自己的 Key，**不会消耗你们的额度**，没配 Key 时自动走本地 fallback，功能仍然可演示。
-- **如果一定要填**：任何访客都能不限量地消耗你的额度（当前后端**没有限流**）。要么先加限流，要么只把链接发给评委。
-- `.env` 永不提交到仓库（`.gitignore` 已排除 `.env` / `.env.*`），只存在于服务器上。
-
-## 6. 上传前端构建产物
-
-```powershell
-# 本地仓库根目录
-tar -czf $env:TEMP\sonic-matter-dist.tgz -C web dist
-scp $env:TEMP\sonic-matter-dist.tgz root@<公网IP>:/tmp/
-```
-
-```bash
-# 服务器
-mkdir -p /opt/sonic-matter/web && tar -xzf /tmp/sonic-matter-dist.tgz -C /opt/sonic-matter/web
-ls /opt/sonic-matter/web/dist     # 期望看到 index.html  assets/  favicon.svg  soundfonts/
-```
-
-## 7. 安装并启动 systemd 服务
+安装仓库中的 systemd 单元：
 
 ```bash
 cp /opt/sonic-matter/deploy/sonic-matter.service /etc/systemd/system/
 systemctl daemon-reload
 systemctl enable --now sonic-matter
-systemctl status sonic-matter --no-pager      # 期望 active (running)
 ```
 
-看日志（`Ctrl+C` 退出）：
+### 4. Nginx 反向代理
+
+在现有 Nginx 站点的 `server` 块中将 `/` 代理到 8088；具体配置文件位置由宝塔/Nginx 当前安装决定，不要覆盖其它站点：
+
+```nginx
+location / {
+    proxy_pass http://127.0.0.1:8088;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    add_header Cache-Control "no-cache";
+}
+```
+
+修改后先检查再重载：
 
 ```bash
-journalctl -u sonic-matter -f
+nginx -t
+systemctl reload nginx
 ```
 
-启动成功时会打印 `已开启前端静态托管` 和 `Agent server 已启动`。
+## 日常更新
 
-## 8. 放行防火墙（两层，都要做）
+推荐让服务器从 GitHub 的 `main` 更新，构建前不要删除运行时数据：
 
 ```bash
-# ① 系统内 firewalld
-firewall-cmd --permanent --add-port=8080/tcp
-firewall-cmd --reload
-firewall-cmd --list-ports          # 确认出现 8080/tcp
-```
+cd /opt/sonic-matter
+cp server/projects/projects.db /tmp/sonic-matter-projects.db.bak
+git fetch origin
+git pull --ff-only origin main
 
-② 阿里云控制台 → 该实例 → **安全组** → 入方向 → 添加规则：`TCP` / 端口 `8080/8080` / 授权对象 `0.0.0.0/0`。
+cd /opt/sonic-matter/server
+/opt/sonic-matter/node/bin/npm ci --omit=dev
 
-> 宝塔面板自带防火墙（面板里叫「安全」）。如果 `firewall-cmd` 里加完仍然打不开，从面板里再加一条，或在面板里直接放行 8080。
+cd /opt/sonic-matter/web
+/opt/sonic-matter/node/bin/npm ci
+/opt/sonic-matter/node/bin/npm run build
 
-## 9. 验证
-
-```bash
-# 服务器内部
-curl -s http://127.0.0.1:8080/api/health ; echo
-curl -s http://127.0.0.1:8080/ | head -3
-```
-
-```powershell
-# 你自己的电脑上（换成公网 IP）
-curl.exe -s -o NUL -w "%{http_code}`n" http://<公网IP>:8080/
-```
-
-期望：`/api/health` 返回 `{"ok":true,...}`，根路径返回 `index.html`，浏览器打开能看到完整界面并导出 MIDI / WAV / MP3。
-
-## 10. 日常更新
-
-**只改了前端**（改了 React 代码）：本地 `npm run build` → 重传 `web/dist` → **不需要重启**（静态文件是按请求从磁盘读的）。
-
-**改了后端**：重传 `server/` 源码 → `systemctl restart sonic-matter`。
-
-```bash
 systemctl restart sonic-matter
 systemctl is-active sonic-matter
 ```
 
-## 11. 排错速查
+若服务器不适合构建前端，在本地构建并上传 `web/dist`，服务端源码更新后再重启 systemd。
 
-| 现象 | 排查方向 |
-| --- | --- |
-| `systemctl status` 显示 failed / 反复重启 | `journalctl -u sonic-matter -n 100 --no-pager` |
-| 日志里 `端口 8080 已被占用` | `ss -lntp \| grep 8080`，换端口（改 `.env` 与 unit 的 `PORT`） |
-| `/api/health` 正常，但 `/` 返回 404 JSON | `WEB_DIST_DIR` 指错，或 `web/dist` 没上传；看启动日志有没有 `前端构建产物目录不存在` 警告 |
-| 服务器内 `curl` 正常，外面打不开 | 防火墙/安全组漏了一层（见第 8 步） |
-| 页面能开但接口全 404 | 检查 `.env` 与 unit 里的 `SERVE_WEB`、`WEB_DIST_DIR` 是否指向同一份产物；`/opt/sonic-matter/web/dist` 里应有 `index.html` |
-| 内存告警 / 服务被杀 | `systemctl show sonic-matter -p MemoryCurrent`；`MemoryMax=512M` 只会杀本服务 |
-| 反复失败后 systemd 不再重启 | `systemctl reset-failed sonic-matter` 后重新 `start` |
+## 验证
 
-## 12. HTTPS 兜底（免备案，可选）
-
-如果需要一个 `https://` 的链接（比如提交材料里写着更好看），可以用 Cloudflare 免费隧道，**不需要域名、不需要备案**：
+服务器内部：
 
 ```bash
-# 服务器上（github.com 已实测可达）
-curl -fsSL -o /tmp/cloudflared.rpm https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-x86_64.rpm
-rpm -ivh /tmp/cloudflared.rpm
-cloudflared tunnel --url http://127.0.0.1:8080 --no-autoupdate
+curl -fsS http://127.0.0.1:8088/api/health
+curl -I http://127.0.0.1:8088/
+curl -I http://127.0.0.1/
 ```
 
-它会打印一个 `https://xxxx.trycloudflare.com` 地址，直接可用。
-
-⚠️ **必须实测**：大陆网络到 Cloudflare 的连通性不稳定，用你的手机 4G 和校园网各打开一次。**打不开就放弃它**，用 IP 地址那套（第 9 步）。隧道是临时地址、重启会变，所以**提交材料以 `http://<公网IP>:8080` 为主，隧道地址作为备用**。
-
-## 13. 安全边界（如实写进材料）
-
-- 赛期内是 **IP + HTTP** 访问：浏览器会提示"不安全"，没有域名、没有备案 —— 这是时间约束下的临时方案。
-- 服务器上 **不放 API Key**：访客用自己的 Key，或走本地 fallback。
-- 后端目前**没有限流、没有鉴权**（Demo 定位）。公网开放后，任何知道地址的人都能调用接口；正式版需要限流 + 账号体系。
-- SSH 用**密码登录且 22 端口对公网开放**：建议装 fail2ban、把 22 端口限制到自己的 IP，赛后换成密钥登录。
-- 工程数据默认存在**访客各自的浏览器 localStorage** 里；换设备/清缓存会丢，请用「保存工程」导出一份 JSON 备份。
-- 云端工程（`/api/projects`）已可用：数据存在 `PROJECTS_DIR`（默认 `server/projects/projects.db`，SQLite 单文件）。**Demo 级实现：无账号、无密码，读取公开（分享链接靠这个），写入用浏览器本地生成的 owner 串校验。**
-
-## 14. 附：在本地演练生产模式
-
-上线前想先在本机验证"单端口托管"这套逻辑（Git Bash / Linux / macOS）：
-
-```bash
-cd server
-SERVE_WEB=1 PORT=8080 node src/index.ts
-# 打开 http://127.0.0.1:8080/ ，看到的应该是构建产物而不是 Vite 的 5173
-```
-
-PowerShell 下：
+服务器外部：
 
 ```powershell
-cd server
-$env:SERVE_WEB='1' ; $env:PORT='8080' ; node src/index.ts
+curl.exe -fsS http://8.141.109.141/api/health
+curl.exe -I http://8.141.109.141/
+curl.exe -I http://8.141.109.141:8088/
 ```
 
-依赖仍需先在 `server/` 与 `web/` 各 `npm ci` 一次，并且 `web/dist` 要先 `npm run build` 出来。
+期望健康接口包含 `"ok":true`，两个页面入口均返回 HTTP 200。
+
+## 回滚
+
+代码回滚使用明确的已知正常 commit，不要删除工程数据库：
+
+```bash
+cd /opt/sonic-matter
+git log --oneline -10
+git switch --detach <已知正常的commit>
+cd web && /opt/sonic-matter/node/bin/npm run build
+systemctl restart sonic-matter
+```
+
+如更新后发现 SQLite 工程异常，先停止服务，再用更新前的 `/tmp/sonic-matter-projects.db.bak` 恢复；恢复会覆盖更新后的云端工程，必须先确认数据范围。
+
+## 排错
+
+```bash
+systemctl status sonic-matter --no-pager
+journalctl -u sonic-matter -n 100 --no-pager
+ss -lntp | grep 8088
+nginx -t
+curl -v http://127.0.0.1:8088/api/health
+```
+
+| 现象 | 检查 |
+| --- | --- |
+| 8088 正常、80 返回 502 | Nginx `proxy_pass`、`nginx -t`、Nginx 错误日志 |
+| API 正常、页面 404 | `SERVE_WEB=1` 与 `WEB_DIST_DIR`，确认 `web/dist/index.html` 存在 |
+| 服务反复重启 | `journalctl -u sonic-matter`、Node 版本、`.env` 路径 |
+| 云端工程列表为空 | `PROJECTS_DIR` 是否仍指向原目录，`projects.db` 是否被保留 |
+| 公网 8088 不通但 80 正常 | 直连端口的安全组/防火墙；不影响 Nginx 默认入口 |
