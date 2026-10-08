@@ -34,64 +34,23 @@ test('老工程的单片段字段与 MIDI 轨仍然能提交上来', () => {
   assert.equal(midi.tracks[0].notes?.length, 1)
 })
 
+test('可选游戏定义通过校验并限制每个文本字段长度', () => {
+  const gameDefinition = {
+    brief: { title: '潮汐档案', genre: '叙事探索', coreLoop: '收集记忆', world: '近未来港口', playerExperience: '从孤独走向释然' },
+    sound: { mood: '克制而神秘', pace: '舒缓流动', texture: '有机与电子交织', avoid: '' },
+  }
+  const parsed = projectSchema.parse({ ...project([audioTrack()]), gameDefinition })
+  assert.deepEqual(parsed.gameDefinition, gameDefinition)
+  assert.equal(projectSchema.safeParse({ ...project([audioTrack()]), gameDefinition: { ...gameDefinition, brief: { ...gameDefinition.brief, world: 'x'.repeat(1001) } } }).success, false)
+  assert.equal(projectSchema.safeParse(project([audioTrack()])).success, true, '旧工程缺少游戏定义仍兼容')
+})
+
 test('前端多塞的未知字段会被剥掉，不会让请求 400', () => {
   const parsed = projectSchema.parse({ ...project([audioTrack()]), somethingNew: 'x' })
   assert.equal('somethingNew' in parsed, false)
   assert.equal(parsed.tracks[0].clips?.length, 1)
 })
 
-test('游戏音频上下文可以通过工程 Schema 并被保留', () => {
-  const parsed = projectSchema.parse({
-    ...project([audioTrack()]),
-    gameBrief: {
-      title: '海底遗迹',
-      genre: '探索解谜',
-      gameplay: '寻找线索',
-      world: '被海水吞没的古城',
-      references: ['作品 A'],
-      scenes: [{ id: 'ruins', name: '遗迹', description: '夜晚遗迹', moods: ['神秘'] }],
-      events: [{ id: 'door', name: '石门打开', description: '沉重的石门开启', category: '机关' }],
-    },
-    gameAnalysis: {
-      summary: '安静、神秘',
-      moods: ['神秘'],
-      musicDirections: [{ id: 'wide', title: '空旷神秘', summary: '留白较多', moods: ['神秘'], suitableScenes: ['遗迹'], recommendedInstruments: ['Pad'] }],
-      sfxDirections: [{ id: 'natural', title: '写实自然', summary: '克制', tags: ['水下'] }],
-      recommendedInstruments: ['钢琴'],
-      recommendedMaterials: ['石材'],
-      avoidDirections: ['过度明亮'],
-    },
-    soundDirection: {
-      musicStyle: ['空旷神秘'],
-      musicMood: ['神秘'],
-      primaryInstruments: ['钢琴'],
-      secondaryInstruments: ['Pad'],
-      rhythmIntensity: 20,
-      melodicDensity: 35,
-      ambienceLevel: 85,
-      sfxStyle: ['写实自然'],
-      selectedDemos: ['demo-wide'],
-    },
-    assets: [{ id: 'sfx-1', title: '石门开启', kind: 'sfx', origin: 'generated', status: 'confirmed', source: '/generated/door.wav', createdAt: 123, sceneId: 'ruins', eventId: 'door' }],
-    currentSceneId: 'ruins',
-  })
-
-  assert.equal(parsed.gameBrief?.scenes[0].id, 'ruins')
-  assert.equal(parsed.gameAnalysis?.musicDirections[0].title, '空旷神秘')
-  assert.equal(parsed.soundDirection?.ambienceLevel, 85)
-  assert.equal(parsed.assets?.[0].source, '/generated/door.wav')
-  assert.equal(parsed.currentSceneId, 'ruins')
-})
-
-test('游戏音频上下文的数组和文本上限生效', () => {
-  const base = project([audioTrack()])
-  const brief = {
-    title: 'x', genre: 'x', gameplay: 'x', world: 'x', references: [], scenes: [], events: [],
-  }
-  assert.equal(projectSchema.safeParse({ ...base, gameBrief: { ...brief, references: Array.from({ length: 13 }, () => 'x') } }).success, false)
-  assert.equal(projectSchema.safeParse({ ...base, soundDirection: { musicStyle: [], musicMood: [], primaryInstruments: [], secondaryInstruments: [], rhythmIntensity: 101, melodicDensity: 0, ambienceLevel: 0, sfxStyle: [], selectedDemos: [] } }).success, false)
-  assert.equal(projectSchema.safeParse({ ...base, assets: Array.from({ length: 129 }, (_, index) => ({ id: `a-${index}`, title: 'x', kind: 'sfx', origin: 'generated', status: 'draft', source: '/generated/x.wav', createdAt: 0 })) }).success, false)
-})
 test('字符串与数组都有上限，挡住整包塞爆请求体的做法', () => {
   assert.equal(projectSchema.safeParse(project([audioTrack({ name: 'x'.repeat(121) })])).success, false)
   assert.equal(projectSchema.safeParse(project([audioTrack({ instrument: 'x'.repeat(61) })])).success, false)

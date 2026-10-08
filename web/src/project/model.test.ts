@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  DEFAULT_PROJECT_TITLE,
   LOCAL_SOUND_CLIP_PREFIX,
   audibleTracks,
   isPlayableClip,
@@ -9,6 +10,7 @@ import {
   normalizeProject,
   primaryMelodyTrack,
   projectDuration,
+  projectWithGameDefinition,
   trackGain,
   trackPan,
   trackStart,
@@ -16,6 +18,7 @@ import {
   type Project,
   type Track,
 } from './model.ts'
+import { emptyGameDefinition } from './gameDefinition.ts'
 
 // 与源码同目录，用 Node 自带的测试运行器执行：node --test "src/**/*.test.ts"
 // 不引入 vitest / jsdom，保证零新增依赖也能在 CI 与本地离线跑通。
@@ -47,6 +50,10 @@ const project = (tracks: Track[], extra: Partial<Project> = {}): Project => ({
   masterGain: 0.9,
   tracks,
   ...extra,
+})
+
+test('默认工程标题描述音乐工作室的创作目标', () => {
+  assert.equal(DEFAULT_PROJECT_TITLE, '生成你的BGM')
 })
 
 test('projectDuration 默认 10 秒，并钳制在 1-120 秒之间', () => {
@@ -149,6 +156,23 @@ test('normalizeProject 修复脏数据而不是直接崩溃', () => {
   assert.equal(second.clip, '/generated/a.wav')
 })
 
+test('游戏定义随工程文档往返，旧工程仍可加载，损坏字段会补默认值并限长', () => {
+  const definition = emptyGameDefinition()
+  definition.brief.title = '潮汐档案'
+  definition.brief.world = '被海水周期性淹没的港口'
+  definition.sound.avoid = '避免过度英雄化'
+  const saved = projectWithGameDefinition(project([midiTrack('melody')]), definition)
+  assert.deepEqual(normalizeProject(JSON.parse(JSON.stringify(saved))).gameDefinition, definition)
+
+  const legacy = normalizeProject({ tracks: [{ id: 'melody', kind: 'midi' }] })
+  assert.equal(legacy.gameDefinition, undefined)
+
+  const partial = normalizeProject({ tracks: [{ id: 'melody', kind: 'midi' }], gameDefinition: { brief: { title: 'x'.repeat(130) }, sound: {} } })
+  assert.equal(partial.gameDefinition?.brief.title.length, 120)
+  assert.equal(partial.gameDefinition?.brief.genre, '')
+  assert.equal(partial.gameDefinition?.sound.mood, '克制而神秘')
+})
+
 test('normalizeProject 保留队友版本的老裁剪字段，但不会把 NaN 写进工程', () => {
   const normalized = normalizeProject({
     tracks: [
@@ -173,61 +197,6 @@ test('normalizeProject 对结构性错误给出中文报错', () => {
   assert.throws(() => normalizeProject({}), /缺少 tracks 数组/)
   assert.throws(() => normalizeProject({ tracks: [] }), /至少需要一条轨道/)
   assert.throws(() => normalizeProject({ tracks: [null] }), /第 1 条轨道格式不正确/)
-})
-
-test('normalizeProject 保留游戏音频上下文，并清理非法扩展字段', () => {
-  const normalized = normalizeProject({
-    gameBrief: {
-      title: '海底遗迹',
-      genre: '探索解谜',
-      gameplay: '在遗迹中寻找线索',
-      world: '被海水吞没的古代城市',
-      references: ['作品 A', 3, '作品 B'],
-      scenes: [{ id: 'ruins', name: '遗迹', description: '夜晚的水下遗迹', moods: ['神秘'] }, { name: '' }],
-      events: [{ id: 'door', name: '石门打开', description: '沉重的石门缓慢开启' }],
-    },
-    gameAnalysis: {
-      summary: '安静而神秘',
-      moods: ['神秘'],
-      musicDirections: [{ id: 'wide', title: '空旷神秘', summary: '留白较多', moods: ['神秘'], suitableScenes: ['遗迹'], recommendedInstruments: ['Pad'] }],
-      sfxDirections: [{ id: 'natural', title: '写实自然', summary: '克制的材质感', tags: ['水下'] }],
-      recommendedInstruments: ['钢琴'],
-      recommendedMaterials: ['石材'],
-      avoidDirections: ['过度明亮'],
-    },
-    soundDirection: {
-      musicStyle: ['空旷神秘'],
-      musicMood: ['神秘'],
-      primaryInstruments: ['钢琴'],
-      secondaryInstruments: ['Pad'],
-      rhythmIntensity: 120,
-      melodicDensity: -5,
-      ambienceLevel: 70,
-      sfxStyle: ['写实自然'],
-      selectedDemos: ['demo-wide'],
-    },
-    assets: [{ id: 'sfx-1', title: '石门开启', kind: 'sfx', origin: 'generated', status: 'confirmed', source: '/generated/door.wav', createdAt: 123, sceneId: 'ruins', eventId: 'door' }, { title: '', source: '/generated/bad.wav' }],
-    currentSceneId: 'ruins',
-    tracks: [{ id: 'melody', kind: 'midi' }],
-  })
-
-  assert.equal(normalized.gameBrief?.scenes.length, 1)
-  assert.deepEqual(normalized.gameBrief?.references, ['作品 A', '作品 B'])
-  assert.equal(normalized.gameAnalysis?.musicDirections[0].id, 'wide')
-  assert.equal(normalized.soundDirection?.rhythmIntensity, 100)
-  assert.equal(normalized.soundDirection?.melodicDensity, 0)
-  assert.equal(normalized.assets?.length, 1)
-  assert.equal(normalized.assets?.[0].eventId, 'door')
-  assert.equal(normalized.currentSceneId, 'ruins')
-})
-
-test('normalizeProject 兼容没有新字段的旧工程', () => {
-  const normalized = normalizeProject({ tracks: [{ id: 'melody', kind: 'midi' }] })
-  assert.equal(normalized.gameBrief, undefined)
-  assert.equal(normalized.gameAnalysis, undefined)
-  assert.equal(normalized.soundDirection, undefined)
-  assert.equal(normalized.assets, undefined)
-  assert.equal(normalized.currentSceneId, undefined)
 })
 
 test('loadLocalProject 读取本地存档，存档损坏时回退到默认工程', () => {

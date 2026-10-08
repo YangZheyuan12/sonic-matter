@@ -10,10 +10,10 @@ import crypto from 'node:crypto'
 import { buildMidiFile, MidiExportError } from './midi.ts'
 import { badRequest, isAbortError, isClientGone, providerNotConfigured, toAppError, zodDetail } from './errors.ts'
 import { logger } from './logger.ts'
-import { gameAnalysisSchema, gameBriefSchema, noteSchema, projectSchema, soundDirectionSchema, trackSchema } from './projectSchema.ts'
+import { noteSchema, projectSchema, trackSchema } from './projectSchema.ts'
+import { buildMusicPlanPrompt, buildProjectEditPrompt } from './musicPrompt.ts'
 import { projectsRouter } from './projects.ts'
 import { ProjectStore } from './projectStore.ts'
-import { sfxDirectionPrompt, sfxGenerationDescription, type GameAudioContext, type SoundDirectionInput } from './soundDirection.ts'
 import {
   agentTimeoutMs,
   allowedOrigins,
@@ -60,7 +60,7 @@ const interpretationSchema = z.object({
   music_mapping: z.object({ tempo: z.number().int().min(40).max(180), key: z.string().min(1).max(30), density: z.number().min(0).max(1), brightness: z.number().min(0).max(1), tension: z.number().min(0).max(1), instruments: z.array(z.string().min(1).max(40)).min(1).max(5) }),
 })
 const conceptResponseSchema = z.object({ concept: z.string().min(1).max(80), interpretations: z.array(interpretationSchema).length(3) })
-const conceptInputSchema = z.object({ concept: z.string().trim().min(1).max(80) }).merge(requestWithAgentSchema)
+const conceptInputSchema = z.object({ concept: z.string().trim().min(1).max(80), context: z.string().trim().max(1200).optional() }).merge(requestWithAgentSchema)
 
 // 工程结构（notes / clips / tracks）统一放在 projectSchema.ts，方便单测。
 const projectEditSchema = z.object({ project: projectSchema, instruction: z.string().trim().min(1).max(500) }).merge(requestWithAgentSchema)
@@ -73,11 +73,11 @@ const editResponseSchema = z.object({ assistant_message: z.string().min(1).max(2
 
 const soundMixerSchema = z.object({ length: z.number().min(.1).max(30), density: z.number().min(0).max(100), brightness: z.number().min(0).max(100), space: z.number().min(0).max(100), compact: z.number().min(0).max(100) })
 const soundPlanSchema = z.object({ title: z.string().min(1).max(80), prompt: z.string().min(1).max(300), duration_seconds: z.number().min(.1).max(30), texture: z.string().min(1).max(80), envelope: z.string().min(1).max(80), space: z.string().min(1).max(80), events: z.array(z.object({ time: z.number().min(0).max(30), event: z.string().min(1).max(120) })).min(1).max(8) })
-const soundPlanInputSchema = z.object({ description: z.string().trim().min(1).max(500), mixer: soundMixerSchema, soundDirection: soundDirectionSchema.optional(), gameBrief: gameBriefSchema.optional(), gameAnalysis: gameAnalysisSchema.optional() }).merge(requestWithAgentSchema)
+const soundPlanInputSchema = z.object({ description: z.string().trim().min(1).max(500), mixer: soundMixerSchema }).merge(requestWithAgentSchema)
 const musicProviderSchema = z.object({ baseUrl: z.string().trim().url().optional(), apiKey: z.string().trim().max(500).optional(), model: z.string().trim().min(1).max(160).optional() }).optional()
 const sfxProviderSchema = z.object({ baseUrl: z.string().trim().url().optional(), apiKey: z.string().trim().max(500).optional(), model: z.string().trim().min(1).max(160).optional() }).optional()
 const musicGenerateInputSchema = z.object({ prompt: z.string().trim().min(1).max(1000), duration_seconds: z.number().min(1).max(30).default(10), music: musicProviderSchema })
-const soundGenerateInputSchema = z.object({ description: z.string().trim().min(1).max(500), mixer: soundMixerSchema, soundDirection: soundDirectionSchema.optional(), gameBrief: gameBriefSchema.optional(), gameAnalysis: gameAnalysisSchema.optional(), sfx: sfxProviderSchema })
+const soundGenerateInputSchema = z.object({ description: z.string().trim().min(1).max(500), mixer: soundMixerSchema, sfx: sfxProviderSchema })
 const musicPlanTrackSchema = z.object({
   id: z.string().min(1).max(40), name: z.string().min(1).max(60), instrument: z.string().min(1).max(40), color: z.string().min(1).max(20),
   notes: z.array(noteSchema).min(1).max(128),
@@ -147,11 +147,12 @@ async function structuredResponse<T>(input: string, name: string, schema: Record
     return rethrowAgentError(error)
   }
 }
-function fallbackConcept(concept: string): z.infer<typeof conceptResponseSchema> {
+function fallbackConcept(concept: string, context = ''): z.infer<typeof conceptResponseSchema> {
+  const contextNote = context ? `结合游戏资料“${context.slice(0, 120)}”` : ''
   return { concept, interpretations: [
-    { id: 'physical', title: `物理${concept}`, summary: `从可观察的形态、材质和运动理解${concept}。`, thesis: `${concept}的重量与尺度可以被听见。`, story_arc: [{ start: 0, end: 3, title: '表面', meaning: '先听见它最直观的轮廓。', musical_role: '稀疏高频、开放音程' }, { start: 3, end: 7, title: '内部', meaning: '进入材质内部，感受隐藏的重量。', musical_role: '低频长音、缓慢叠层' }, { start: 7, end: 10, title: '变化', meaning: '让形态在最后一刻发生变化。', musical_role: '颗粒化碎片、宽阔尾响' }], music_mapping: { tempo: 58, key: 'D minor', density: .28, brightness: .68, tension: .5, instruments: ['glass_bell', 'cello', 'sub_bass'] } },
-    { id: 'psychological', title: `心理${concept}`, summary: `从记忆、情绪和未被说出的部分理解${concept}。`, thesis: `${concept}既是对象，也是人心里的一块回声。`, story_arc: [{ start: 0, end: 3, title: '可见表面', meaning: '保持克制，只留下一个清晰动机。', musical_role: '单音旋律、留白' }, { start: 3, end: 7, title: '水下意识', meaning: '隐藏的情绪逐渐浮上来。', musical_role: '大提琴持续音、低频脉冲' }, { start: 7, end: 10, title: '裂缝出现', meaning: '真正的情绪穿透表面。', musical_role: '和声短暂失衡、明亮噪点' }], music_mapping: { tempo: 72, key: 'C minor', density: .44, brightness: .42, tension: .72, instruments: ['felt_piano', 'cello', 'granular_pad'] } },
-    { id: 'climate', title: `生态${concept}`, summary: `从时间、环境和人与世界的关系理解${concept}。`, thesis: `${concept}也记录着一个系统正在如何变化。`, story_arc: [{ start: 0, end: 3, title: '古老平衡', meaning: '系统维持着缓慢而稳定的呼吸。', musical_role: '规整脉冲、自然泛音' }, { start: 3, end: 7, title: '扰动进入', meaning: '外部压力让节奏变得拥挤。', musical_role: '机械脉冲、密度上升' }, { start: 7, end: 10, title: '留下回声', meaning: '主题淡出，但提醒仍然存在。', musical_role: '稀释旋律、开放尾声' }], music_mapping: { tempo: 84, key: 'A minor', density: .62, brightness: .55, tension: .66, instruments: ['prepared_piano', 'field_texture', 'soft_synth'] } },
+    { id: 'physical', title: `物理${concept}`, summary: `从可观察的形态、材质和运动理解${concept}。${contextNote}`, thesis: `${concept}的重量与尺度可以被听见。`, story_arc: [{ start: 0, end: 3, title: '表面', meaning: '先听见它最直观的轮廓。', musical_role: '稀疏高频、开放音程' }, { start: 3, end: 7, title: '内部', meaning: '进入材质内部，感受隐藏的重量。', musical_role: '低频长音、缓慢叠层' }, { start: 7, end: 10, title: '变化', meaning: '让形态在最后一刻发生变化。', musical_role: '颗粒化碎片、宽阔尾响' }], music_mapping: { tempo: 58, key: 'D minor', density: .28, brightness: .68, tension: .5, instruments: ['glass_bell', 'cello', 'sub_bass'] } },
+    { id: 'psychological', title: `心理${concept}`, summary: `从记忆、情绪和未被说出的部分理解${concept}。${contextNote}`, thesis: `${concept}既是对象，也是人心里的一块回声。`, story_arc: [{ start: 0, end: 3, title: '可见表面', meaning: '保持克制，只留下一个清晰动机。', musical_role: '单音旋律、留白' }, { start: 3, end: 7, title: '水下意识', meaning: '隐藏的情绪逐渐浮上来。', musical_role: '大提琴持续音、低频脉冲' }, { start: 7, end: 10, title: '裂缝出现', meaning: '真正的情绪穿透表面。', musical_role: '和声短暂失衡、明亮噪点' }], music_mapping: { tempo: 72, key: 'C minor', density: .44, brightness: .42, tension: .72, instruments: ['felt_piano', 'cello', 'granular_pad'] } },
+    { id: 'climate', title: `生态${concept}`, summary: `从时间、环境和人与世界的关系理解${concept}。${contextNote}`, thesis: `${concept}也记录着一个系统正在如何变化。`, story_arc: [{ start: 0, end: 3, title: '古老平衡', meaning: '系统维持着缓慢而稳定的呼吸。', musical_role: '规整脉冲、自然泛音' }, { start: 3, end: 7, title: '扰动进入', meaning: '外部压力让节奏变得拥挤。', musical_role: '机械脉冲、密度上升' }, { start: 7, end: 10, title: '留下回声', meaning: '主题淡出，但提醒仍然存在。', musical_role: '稀释旋律、开放尾声' }], music_mapping: { tempo: 84, key: 'A minor', density: .62, brightness: .55, tension: .66, instruments: ['prepared_piano', 'field_texture', 'soft_synth'] } },
   ] }
 }
 function fallbackMusicPlan(project: z.infer<typeof projectSchema>): z.infer<typeof musicPlanSchema> {
@@ -159,7 +160,7 @@ function fallbackMusicPlan(project: z.infer<typeof projectSchema>): z.infer<type
   const tracks = source.length ? source.map((track, index) => ({ id: `ai-structure-${index + 1}`, name: `${track.name} · 结构化`, instrument: track.instrument, color: track.color, notes: (track.notes ?? []).slice(0, 128) })) : [{ id: 'ai-structure-1', name: '结构化旋律', instrument: 'Synth', color: '#7dd3fc', notes: [{ id: 'generated-1', pitch: 60, start: 0, duration: 0.5, velocity: 90 }, { id: 'generated-2', pitch: 64, start: 0.75, duration: 0.5, velocity: 82 }, { id: 'generated-3', pitch: 67, start: 1.5, duration: 0.75, velocity: 88 }] }]
   return { title: `${project.title} · 结构化草案`, tempo: project.tempo, key: project.key, duration: Math.min(30, project.duration ?? 10), tracks }
 }
-function fallbackSound(description: string, mixer: z.infer<typeof soundMixerSchema>, direction?: SoundDirectionInput, context?: GameAudioContext): z.infer<typeof soundPlanSchema> { const projectTitle = context?.gameBrief?.title || 'default project'; const genre = context?.gameBrief?.genre || 'default'; return { title: 'Semantic Sound Sketch', prompt: `${description}; ${projectTitle}; ${genre}; ${direction?.sfxStyle.join(', ') || 'default'}; density ${mixer.density}%; brightness ${mixer.brightness}%; spaciousness ${mixer.space}%; compactness ${mixer.compact}%`.slice(0, 300), duration_seconds: mixer.length, texture: mixer.brightness > 60 ? 'bright granular transient' : 'dark granular transient', envelope: mixer.compact > 60 ? 'tight attack, short decay' : 'soft attack, long tail', space: mixer.space > 60 ? 'wide underwater reverb' : 'near-field dry room', events: [{ time: 0, event: 'distant onset' }, { time: Math.max(.1, mixer.length * .42), event: 'textural rupture' }, { time: Math.max(.2, mixer.length * .78), event: 'resonant tail' }] } }
+function fallbackSound(description: string, mixer: z.infer<typeof soundMixerSchema>): z.infer<typeof soundPlanSchema> { return { title: 'Semantic Sound Sketch', prompt: `${description}; density ${mixer.density}%; brightness ${mixer.brightness}%; spaciousness ${mixer.space}%; compactness ${mixer.compact}%`, duration_seconds: mixer.length, texture: mixer.brightness > 60 ? 'bright granular transient' : 'dark granular transient', envelope: mixer.compact > 60 ? 'tight attack, short decay' : 'soft attack, long tail', space: mixer.space > 60 ? 'wide underwater reverb' : 'near-field dry room', events: [{ time: 0, event: 'distant onset' }, { time: Math.max(.1, mixer.length * .42), event: 'textural rupture' }, { time: Math.max(.2, mixer.length * .78), event: 'resonant tail' }] } }
 function requiredSecret(name: string) {
   const value = process.env[name]
   if (!value) throw new Error(`${name}_MISSING`)
@@ -202,13 +203,13 @@ async function generateWithReplicate(prompt: string, durationSeconds: number, co
   return downloadGeneratedAudio(output, 'wav', signal)
 }
 
-async function generateWithElevenLabs(description: string, mixer: z.infer<typeof soundMixerSchema>, direction?: SoundDirectionInput, context?: GameAudioContext, config?: { baseUrl?: string; apiKey?: string; model?: string }, signal?: AbortSignal) {
+async function generateWithElevenLabs(description: string, mixer: z.infer<typeof soundMixerSchema>, config?: { baseUrl?: string; apiKey?: string; model?: string }, signal?: AbortSignal) {
   const apiKey = config?.apiKey || requiredSecret('ELEVENLABS_API_KEY')
   const baseUrl = (config?.baseUrl || 'https://api.elevenlabs.io/v1').replace(/\/$/, '')
   const response = await fetchWithRetry(`${baseUrl}/sound-generation`, {
     method: 'POST',
     headers: { 'xi-api-key': apiKey, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text: `${sfxGenerationDescription(description, direction, context)}. Duration ${mixer.length} seconds. Density ${mixer.density} percent. Brightness ${mixer.brightness} percent. Spaciousness ${mixer.space} percent. Compactness ${mixer.compact} percent.` }),
+    body: JSON.stringify({ text: `${description}. Duration ${mixer.length} seconds. Density ${mixer.density} percent. Brightness ${mixer.brightness} percent. Spaciousness ${mixer.space} percent. Compactness ${mixer.compact} percent.` }),
   }, { label: '音效生成', signal })
   if (!response.ok) throw new Error(`ELEVENLABS_GENERATE_${response.status}`)
   const buffer = Buffer.from(await response.arrayBuffer())
@@ -232,14 +233,14 @@ const isNotConfigured = (error: unknown) => toAppError(error).code === 'provider
 
 app.post('/api/concept/interpret', asyncHandler(async (req, res) => {
   const parsed = conceptInputSchema.safeParse(req.body)
-  if (!parsed.success) throw badRequest('concept 必须是 1-80 个字符。', zodDetail(parsed.error))
-  const { concept, agent } = parsed.data
+  if (!parsed.success) throw badRequest('游戏理解输入不正确，请检查焦点文字和游戏资料长度。', zodDetail(parsed.error))
+  const { concept, context, agent } = parsed.data
   const config = resolveAgentConfig(agent)
   try {
-    const result = await structuredResponse(['你是“万物声谱”的概念作曲 Agent。', '请把用户输入的抽象或具象词语，分别从物理、心理、生态/社会三个视角解释，并为每个视角设计一个 10 秒的音乐叙事。', '输出必须严格符合 JSON Schema；不要输出 Markdown。', `用户词语：${concept}`].join('\n'), 'concept_interpretation', conceptJsonSchema, conceptResponseSchema, config, req.abortSignal)
+    const result = await structuredResponse(['你是“万物声谱”的概念作曲 Agent。', '请结合完整游戏资料，把用户焦点分别从物理、心理、生态/社会三个视角解释，并为每个视角设计一个 10 秒的音乐叙事。', '故事弧线、情绪和音乐映射都必须具体响应游戏玩法、世界设定与玩家体验；避免只重复焦点词。', '输出必须严格符合 JSON Schema；不要输出 Markdown。', `理解焦点：${concept}`, context ? `游戏资料与声音方向：\n${context}` : '未提供额外游戏资料。'].join('\n'), 'concept_interpretation', conceptJsonSchema, conceptResponseSchema, config, req.abortSignal)
     return res.json({ ...result, source: 'agent' })
   } catch (error) {
-    if (isNotConfigured(error)) return res.json({ ...fallbackConcept(concept), source: 'fallback', warning: '未配置 API Key，当前使用本地 fallback。' })
+    if (isNotConfigured(error)) return res.json({ ...fallbackConcept(concept, context), source: 'fallback', warning: '未配置 API Key，当前使用本地 fallback。' })
     throw error
   }
 }))
@@ -248,20 +249,19 @@ app.post('/api/project/edit', asyncHandler(async (req, res) => {
   const parsed = projectEditSchema.safeParse(req.body)
   if (!parsed.success) throw badRequest('工程或 Agent 指令格式不正确。', zodDetail(parsed.error))
   const { project, instruction, agent } = parsed.data
-  const result = await structuredResponse(['你是音乐工程编辑 Agent。只根据用户指令提出安全、可执行的工程操作。', '优先返回 update_project、update_track 或 add_track；不要删除轨道，不要生成不可编辑的二进制音频。', `当前工程 JSON：${JSON.stringify(project)}`, `用户指令：${instruction}`].join('\n'), 'project_edit_operations', editJsonSchema, editResponseSchema, resolveAgentConfig(agent), req.abortSignal)
+  const result = await structuredResponse(buildProjectEditPrompt(project, instruction), 'project_edit_operations', editJsonSchema, editResponseSchema, resolveAgentConfig(agent), req.abortSignal)
   return res.json({ ...result, source: 'agent' })
 }))
 
 app.post('/api/sfx/plan', asyncHandler(async (req, res) => {
   const parsed = soundPlanInputSchema.safeParse(req.body)
   if (!parsed.success) throw badRequest('音效描述或调音台参数不正确。', zodDetail(parsed.error))
-  const { description, mixer, soundDirection, gameBrief, gameAnalysis, agent } = parsed.data
-  const context = { gameBrief, gameAnalysis }
+  const { description, mixer, agent } = parsed.data
   try {
-    const result = await structuredResponse(['你是音效设计 Agent。请把声音描述和调音台参数转换为一个可交给音效生成模型的结构化声音计划。', '不要返回音频二进制，只返回 JSON。', `描述：${description}`, sfxDirectionPrompt(soundDirection, context), `调音台：${JSON.stringify(mixer)}`].join('\n'), 'sound_design_plan', soundJsonSchema, soundPlanSchema, resolveAgentConfig(agent), req.abortSignal)
+    const result = await structuredResponse(['你是音效设计 Agent。请把声音描述和调音台参数转换为一个可交给音效生成模型的结构化声音计划。', '不要返回音频二进制，只返回 JSON。', `描述：${description}`, `调音台：${JSON.stringify(mixer)}`].join('\n'), 'sound_design_plan', soundJsonSchema, soundPlanSchema, resolveAgentConfig(agent), req.abortSignal)
     return res.json({ ...result, source: 'agent' })
   } catch (error) {
-    if (isNotConfigured(error)) return res.json({ ...fallbackSound(description, mixer, soundDirection, context), source: 'fallback', warning: '未配置 API Key，当前使用本地声音计划。' })
+    if (isNotConfigured(error)) return res.json({ ...fallbackSound(description, mixer), source: 'fallback', warning: '未配置 API Key，当前使用本地声音计划。' })
     throw error
   }
 }))
@@ -271,14 +271,7 @@ app.post('/api/music/plan', asyncHandler(async (req, res) => {
   if (!parsed.success) throw badRequest('音乐工程描述或当前 Project 数据不正确。', zodDetail(parsed.error))
   const { project, prompt, agent } = parsed.data
   try {
-    const result = await structuredResponse([
-      '你是可编辑音乐工程 Agent。请把用户的音乐意图转换为一个 10 秒左右、可编辑的 MIDI/和弦 Project JSON。',
-      '只输出结构化 JSON，不要 Markdown，不要音频 URL，不要二进制音频。',
-      '至少生成一条 MIDI 轨道；可以生成旋律、和弦、低音或打击乐轨道。每个音符都必须包含 pitch、start、duration、velocity。',
-      '请保持音高在 MIDI 0-127，时间不超过 duration，避免不必要的密集重叠。和弦请用同一时间起始的多个音符表达。',
-      `当前工程：${JSON.stringify(project)}`,
-      `用户意图：${prompt}`,
-    ].join('\n'), 'music_project_plan', musicPlanJsonSchema, musicPlanSchema, resolveAgentConfig(agent), req.abortSignal)
+    const result = await structuredResponse(buildMusicPlanPrompt(project, prompt), 'music_project_plan', musicPlanJsonSchema, musicPlanSchema, resolveAgentConfig(agent), req.abortSignal)
     return res.json({ ...result, source: 'agent' })
   } catch (error) {
     if (isNotConfigured(error)) return res.json({ ...fallbackMusicPlan(project), source: 'fallback', warning: '未配置 Agent API Key，当前沿用现有 MIDI 结构作为可编辑草案。' })
@@ -296,7 +289,7 @@ app.post('/api/music/generate', asyncHandler(async (req, res) => {
 app.post('/api/sfx/generate', asyncHandler(async (req, res) => {
   const parsed = soundGenerateInputSchema.safeParse(req.body)
   if (!parsed.success) throw badRequest('音效描述或调音台参数不正确。', zodDetail(parsed.error))
-  const generated = await generateWithElevenLabs(parsed.data.description, parsed.data.mixer, parsed.data.soundDirection, { gameBrief: parsed.data.gameBrief, gameAnalysis: parsed.data.gameAnalysis }, parsed.data.sfx, req.abortSignal)
+  const generated = await generateWithElevenLabs(parsed.data.description, parsed.data.mixer, parsed.data.sfx, req.abortSignal)
   return res.json({ ...generated, provider: 'elevenlabs', source: 'audio-model' })
 }))
 

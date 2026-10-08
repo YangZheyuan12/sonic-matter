@@ -84,7 +84,11 @@ test('没人碰云端工程时不会建目录、不会建库（惰性）', () =>
 })
 
 test('保存后拿到分享 ID，任何人用这个 ID 都能读到工程内容', async () => {
-  const saved = await save(OWNER_A, projectOf('分享测试', 6))
+  const gameDefinition = {
+    brief: { title: '潮汐档案', genre: '叙事探索', coreLoop: '收集记忆', world: '近未来港口', playerExperience: '从孤独走向释然' },
+    sound: { mood: '克制而神秘', pace: '舒缓流动', texture: '有机与电子交织', avoid: '' },
+  }
+  const saved = await save(OWNER_A, { ...projectOf('分享测试', 6), gameDefinition })
   assert.equal(saved.status, 201)
   assert.match(saved.body.id, /^[A-Za-z0-9_-]{16}$/)
   assert.equal(saved.body.path, `/?p=${saved.body.id}`)
@@ -93,10 +97,11 @@ test('保存后拿到分享 ID，任何人用这个 ID 都能读到工程内容'
   // 没带 owner 头也能读——分享链接的用途就是让别人打开。
   const opened = await call(`/api/projects/${saved.body.id}`)
   assert.equal(opened.status, 200)
-  const body = await opened.json() as { project: { title: string; tracks: Array<{ notes: unknown[] }> }; title: string; trackCount: number }
+  const body = await opened.json() as { project: { title: string; gameDefinition: typeof gameDefinition; tracks: Array<{ notes: unknown[] }> }; title: string; trackCount: number }
   assert.equal(body.title, '分享测试')
   assert.equal(body.trackCount, 1)
   assert.equal(body.project.title, '分享测试')
+  assert.deepEqual(body.project.gameDefinition, gameDefinition, 'SQLite 云端工程应往返保存游戏定义')
   assert.equal(body.project.tracks[0].notes.length, 6)
 
   assert.equal(existsSync(path.join(projectsDir, 'projects.db')), true, '第一次保存后数据库文件应当出现')
@@ -119,21 +124,6 @@ test('列表只给元信息，并且按浏览器身份隔离', async () => {
   const stranger = await call('/api/projects', { owner: OWNER_B })
   const strangerBody = await stranger.json() as { projects: Array<{ title: string }> }
   assert.deepEqual(strangerBody.projects.map(item => item.title), ['B 的工程'])
-})
-
-test('云端工程保存和打开会保留游戏音频上下文', async () => {
-  const project = {
-    ...projectOf('上下文往返'),
-    gameBrief: { title: '海底遗迹', genre: '探索解谜', gameplay: '寻找线索', world: '水下古城', references: [], scenes: [{ id: 'ruins', name: '遗迹', description: '夜晚遗迹' }], events: [] },
-    soundDirection: { musicStyle: ['空旷神秘'], musicMood: ['神秘'], primaryInstruments: ['钢琴'], secondaryInstruments: [], rhythmIntensity: 20, melodicDensity: 30, ambienceLevel: 80, sfxStyle: ['写实自然'], selectedDemos: [] },
-  }
-  const saved = await save(OWNER_A, project)
-  assert.equal(saved.status, 201)
-  const opened = await call(`/api/projects/${saved.body.id}`)
-  assert.equal(opened.status, 200)
-  const body = await opened.json() as { project: typeof project }
-  assert.equal(body.project.gameBrief.scenes[0].id, 'ruins')
-  assert.equal(body.project.soundDirection.ambienceLevel, 80)
 })
 
 test('覆盖保存会递增版本号，createdAt 不变', async () => {

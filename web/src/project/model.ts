@@ -1,6 +1,6 @@
-import type { EventBrief, GameAnalysis, GameBrief, SceneBrief } from './game'
-import type { ProjectAsset } from './asset'
-import type { SoundDirection } from './sound'
+import { emptyGameDefinition, normalizeGameDefinition, type GameDefinition } from './gameDefinition.ts'
+
+export const DEFAULT_PROJECT_TITLE = '生成你的BGM'
 
 export type Note = {
   id: string
@@ -57,11 +57,7 @@ export type Project = {
   duration?: number
   masterGain?: number
   concept?: { word: string; title: string; story: Story[] }
-  gameBrief?: GameBrief
-  gameAnalysis?: GameAnalysis
-  soundDirection?: SoundDirection
-  assets?: ProjectAsset[]
-  currentSceneId?: string
+  gameDefinition?: GameDefinition
   tracks: Track[]
 }
 
@@ -140,133 +136,6 @@ export function audibleTracks(project: Project) {
 
 const finite = (value: unknown, fallback: number) => typeof value === 'number' && Number.isFinite(value) ? value : fallback
 const text = (value: unknown, fallback: string) => typeof value === 'string' && value.trim() ? value : fallback
-const optionalText = (value: unknown, max: number) => typeof value === 'string' && value.trim().length <= max ? value.trim() : undefined
-const textArray = (value: unknown, maxItems: number, maxText: number) => Array.isArray(value)
-  ? value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0 && item.length <= maxText).slice(0, maxItems).map(item => item.trim())
-  : []
-const optionalTextArray = (value: unknown, maxItems: number, maxText: number) => Array.isArray(value) ? textArray(value, maxItems, maxText) : undefined
-
-function normalizeScene(raw: unknown, index: number): SceneBrief | null {
-  if (!raw || typeof raw !== 'object') return null
-  const input = raw as Partial<SceneBrief>
-  const name = optionalText(input.name, 120)
-  if (!name) return null
-  return {
-    id: optionalText(input.id, 80) ?? `scene-${index + 1}`,
-    name,
-    description: optionalText(input.description, 800) ?? '',
-    moods: optionalTextArray(input.moods, 12, 60),
-  }
-}
-
-function normalizeEvent(raw: unknown, index: number): EventBrief | null {
-  if (!raw || typeof raw !== 'object') return null
-  const input = raw as Partial<EventBrief>
-  const name = optionalText(input.name, 120)
-  if (!name) return null
-  return {
-    id: optionalText(input.id, 80) ?? `event-${index + 1}`,
-    name,
-    description: optionalText(input.description, 800) ?? '',
-    category: optionalText(input.category, 80),
-  }
-}
-
-function normalizeGameBrief(raw: unknown): GameBrief | undefined {
-  if (!raw || typeof raw !== 'object') return undefined
-  const input = raw as Partial<GameBrief>
-  return {
-    title: optionalText(input.title, 120) ?? '',
-    genre: optionalText(input.genre, 120) ?? '',
-    gameplay: optionalText(input.gameplay, 2000) ?? '',
-    world: optionalText(input.world, 2000) ?? '',
-    references: textArray(input.references, 12, 160),
-    scenes: (Array.isArray(input.scenes) ? input.scenes : []).map(normalizeScene).filter((item): item is SceneBrief => item !== null).slice(0, 32),
-    events: (Array.isArray(input.events) ? input.events : []).map(normalizeEvent).filter((item): item is EventBrief => item !== null).slice(0, 64),
-  }
-}
-
-function normalizeMusicDirection(raw: unknown, index: number) {
-  if (!raw || typeof raw !== 'object') return null
-  const input = raw as Partial<import('./game').MusicDirection>
-  const title = optionalText(input.title, 120)
-  if (!title) return null
-  return {
-    id: optionalText(input.id, 80) ?? `music-direction-${index + 1}`,
-    title,
-    summary: optionalText(input.summary, 800) ?? '',
-    moods: textArray(input.moods, 12, 60),
-    suitableScenes: textArray(input.suitableScenes, 16, 120),
-    recommendedInstruments: textArray(input.recommendedInstruments, 24, 80),
-    demoIds: optionalTextArray(input.demoIds, 24, 120),
-  }
-}
-
-function normalizeSfxDirection(raw: unknown, index: number) {
-  if (!raw || typeof raw !== 'object') return null
-  const input = raw as Partial<import('./game').SfxDirection>
-  const title = optionalText(input.title, 120)
-  if (!title) return null
-  return {
-    id: optionalText(input.id, 80) ?? `sfx-direction-${index + 1}`,
-    title,
-    summary: optionalText(input.summary, 800) ?? '',
-    tags: textArray(input.tags, 12, 60),
-    demoIds: optionalTextArray(input.demoIds, 24, 120),
-  }
-}
-
-function normalizeGameAnalysis(raw: unknown): GameAnalysis | undefined {
-  if (!raw || typeof raw !== 'object') return undefined
-  const input = raw as Partial<GameAnalysis>
-  return {
-    summary: optionalText(input.summary, 2000) ?? '',
-    moods: textArray(input.moods, 16, 60),
-    musicDirections: (Array.isArray(input.musicDirections) ? input.musicDirections : []).map(normalizeMusicDirection).filter(item => item !== null).slice(0, 8),
-    sfxDirections: (Array.isArray(input.sfxDirections) ? input.sfxDirections : []).map(normalizeSfxDirection).filter(item => item !== null).slice(0, 8),
-    recommendedInstruments: textArray(input.recommendedInstruments, 32, 80),
-    recommendedMaterials: textArray(input.recommendedMaterials, 32, 80),
-    avoidDirections: textArray(input.avoidDirections, 24, 160),
-  }
-}
-
-function normalizeSoundDirection(raw: unknown): SoundDirection | undefined {
-  if (!raw || typeof raw !== 'object') return undefined
-  const input = raw as Partial<SoundDirection>
-  return {
-    musicStyle: textArray(input.musicStyle, 12, 80),
-    musicMood: textArray(input.musicMood, 12, 80),
-    primaryInstruments: textArray(input.primaryInstruments, 16, 80),
-    secondaryInstruments: textArray(input.secondaryInstruments, 24, 80),
-    rhythmIntensity: Math.max(0, Math.min(100, finite(input.rhythmIntensity, 50))),
-    melodicDensity: Math.max(0, Math.min(100, finite(input.melodicDensity, 50))),
-    ambienceLevel: Math.max(0, Math.min(100, finite(input.ambienceLevel, 50))),
-    sfxStyle: textArray(input.sfxStyle, 12, 80),
-    selectedDemos: textArray(input.selectedDemos, 32, 120),
-  }
-}
-
-function normalizeAsset(raw: unknown, index: number): ProjectAsset | null {
-  if (!raw || typeof raw !== 'object') return null
-  const input = raw as Partial<ProjectAsset>
-  const title = optionalText(input.title, 160)
-  const source = optionalText(input.source, 24000)
-  if (!title || !source) return null
-  const kinds = ['music', 'sfx', 'ambience', 'voice'] as const
-  const origins = ['generated', 'uploaded', 'recorded'] as const
-  const statuses = ['draft', 'confirmed', 'archived'] as const
-  return {
-    id: optionalText(input.id, 80) ?? `asset-${index + 1}`,
-    title,
-    kind: kinds.includes(input.kind as typeof kinds[number]) ? input.kind as ProjectAsset['kind'] : 'sfx',
-    origin: origins.includes(input.origin as typeof origins[number]) ? input.origin as ProjectAsset['origin'] : 'generated',
-    status: statuses.includes(input.status as typeof statuses[number]) ? input.status as ProjectAsset['status'] : 'draft',
-    source,
-    createdAt: Math.max(0, finite(input.createdAt, 0)),
-    sceneId: optionalText(input.sceneId, 80),
-    eventId: optionalText(input.eventId, 80),
-  }
-}
 
 export function normalizeProject(value: unknown): Project {
   if (!value || typeof value !== 'object') throw new Error('工程文件不是有效的 JSON 对象。')
@@ -312,13 +181,14 @@ export function normalizeProject(value: unknown): Project {
     duration: Math.max(1, Math.min(120, finite(input.duration, 10))),
     masterGain: Math.max(0, Math.min(1, finite(input.masterGain, .9))),
     concept: input.concept,
-    gameBrief: normalizeGameBrief(input.gameBrief),
-    gameAnalysis: normalizeGameAnalysis(input.gameAnalysis),
-    soundDirection: normalizeSoundDirection(input.soundDirection),
-    assets: Array.isArray(input.assets) ? input.assets.map(normalizeAsset).filter((item): item is ProjectAsset => item !== null).slice(0, 128) : undefined,
-    currentSceneId: optionalText(input.currentSceneId, 80),
+    gameDefinition: normalizeGameDefinition(input.gameDefinition),
     tracks,
   }
+}
+
+/** 把独立编辑的游戏定义合并进工程文档，不将表单输入写入音乐撤销历史。 */
+export function projectWithGameDefinition(project: Project, gameDefinition: GameDefinition): Project {
+  return { ...project, gameDefinition: normalizeGameDefinition(gameDefinition) ?? emptyGameDefinition() }
 }
 
 export function loadLocalProject(fallback: Project): Project {

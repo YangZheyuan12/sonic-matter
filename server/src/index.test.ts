@@ -43,33 +43,12 @@ test('没有 API Key 也能通过健康检查，并沿用客户端给的 X-Reque
 })
 
 test('概念解析在没有 Key 时返回本地 fallback 的三个视角', async () => {
-  const response = await post('/api/concept/interpret', JSON.stringify({ concept: '冰山', agent: { apiKey: '' } }))
+  const response = await post('/api/concept/interpret', JSON.stringify({ concept: '潮汐档案', context: '核心玩法：在退潮后的城市收集记忆', agent: { apiKey: '' } }))
   assert.equal(response.status, 200)
-  const body = await response.json() as { source: string; interpretations: unknown[] }
+  const body = await response.json() as { source: string; interpretations: Array<{ summary: string }> }
   assert.equal(body.source, 'fallback')
   assert.equal(body.interpretations.length, 3)
-})
-
-test('音效计划接收项目声音方向，并在 fallback 计划中保留音效风格', async () => {
-  const response = await post('/api/sfx/plan', JSON.stringify({
-    description: '石门缓慢开启',
-    mixer: { length: 2.4, density: 42, brightness: 64, space: 78, compact: 35 },
-    soundDirection: {
-      musicStyle: ['ambient'], musicMood: ['mysterious'], primaryInstruments: ['Piano'], secondaryInstruments: [],
-      rhythmIntensity: 20, melodicDensity: 30, ambienceLevel: 85, sfxStyle: ['organic', 'cinematic'], selectedDemos: ['underwater ruins'],
-    },
-    gameBrief: {
-      title: '海底遗迹', genre: '探索解谜', gameplay: '潜入遗迹寻找机关', world: '被潮汐覆盖的古文明', references: [],
-      scenes: [{ id: 'hall', name: '沉没大厅', description: '空旷石质空间', moods: ['神秘'] }],
-      events: [{ id: 'gate', name: '石门开启', description: '古老机关启动', category: '机关' }],
-    },
-    agent: { apiKey: '' },
-  }))
-  assert.equal(response.status, 200)
-  const body = await response.json() as { source: string; prompt: string }
-  assert.equal(body.source, 'fallback')
-  assert.match(body.prompt, /organic, cinematic/)
-  assert.match(body.prompt, /海底遗迹/)
+  assert.match(body.interpretations[0].summary, /核心玩法：在退潮后的城市收集记忆/)
 })
 
 test('坏 JSON 与不合法入参都是 400，并且带上 requestId', async () => {
@@ -81,6 +60,9 @@ test('坏 JSON 与不合法入参都是 400，并且带上 requestId', async () 
 
   const invalid = await post('/api/concept/interpret', JSON.stringify({ concept: '' }))
   assert.equal(invalid.status, 400)
+
+  const oversizedContext = await post('/api/concept/interpret', JSON.stringify({ concept: '潮汐档案', context: 'x'.repeat(1201) }))
+  assert.equal(oversizedContext.status, 400)
 })
 
 test('超过 JSON_BODY_LIMIT 的请求给出 413 + payload_too_large，而不是上游错误', async () => {
