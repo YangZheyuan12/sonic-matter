@@ -103,3 +103,9 @@ export const definitionContext = (definition: GameDefinition) => {
     .map(([label, value]) => `${label}：${value.trim()}`)
     .join('\n')
 }
+
+/** 音乐工作室使用的短上下文：保留玩法与声音方向，避免把整份工程 JSON 塞进用户提示。 */
+export const musicDirectionContext = (definition: GameDefinition) => {
+  const context = definitionContext(definition)
+  return context ? `创作背景（游戏定义）：\n${context}` : '创作背景：尚未填写完整游戏定义，请先保留开放、可编辑的声音空间。'
+}

@@ -11,6 +11,7 @@ import { buildMidiFile, MidiExportError } from './midi.ts'
 import { badRequest, isAbortError, isClientGone, providerNotConfigured, toAppError, zodDetail } from './errors.ts'
 import { logger } from './logger.ts'
 import { noteSchema, projectSchema, trackSchema } from './projectSchema.ts'
+import { buildMusicPlanPrompt, buildProjectEditPrompt } from './musicPrompt.ts'
 import { projectsRouter } from './projects.ts'
 import { ProjectStore } from './projectStore.ts'
 import {
@@ -248,7 +249,7 @@ app.post('/api/project/edit', asyncHandler(async (req, res) => {
   const parsed = projectEditSchema.safeParse(req.body)
   if (!parsed.success) throw badRequest('工程或 Agent 指令格式不正确。', zodDetail(parsed.error))
   const { project, instruction, agent } = parsed.data
-  const result = await structuredResponse(['你是音乐工程编辑 Agent。只根据用户指令提出安全、可执行的工程操作。', '优先返回 update_project、update_track 或 add_track；不要删除轨道，不要生成不可编辑的二进制音频。', `当前工程 JSON：${JSON.stringify(project)}`, `用户指令：${instruction}`].join('\n'), 'project_edit_operations', editJsonSchema, editResponseSchema, resolveAgentConfig(agent), req.abortSignal)
+  const result = await structuredResponse(buildProjectEditPrompt(project, instruction), 'project_edit_operations', editJsonSchema, editResponseSchema, resolveAgentConfig(agent), req.abortSignal)
   return res.json({ ...result, source: 'agent' })
 }))
 
@@ -270,14 +271,7 @@ app.post('/api/music/plan', asyncHandler(async (req, res) => {
   if (!parsed.success) throw badRequest('音乐工程描述或当前 Project 数据不正确。', zodDetail(parsed.error))
   const { project, prompt, agent } = parsed.data
   try {
-    const result = await structuredResponse([
-      '你是可编辑音乐工程 Agent。请把用户的音乐意图转换为一个 10 秒左右、可编辑的 MIDI/和弦 Project JSON。',
-      '只输出结构化 JSON，不要 Markdown，不要音频 URL，不要二进制音频。',
-      '至少生成一条 MIDI 轨道；可以生成旋律、和弦、低音或打击乐轨道。每个音符都必须包含 pitch、start、duration、velocity。',
-      '请保持音高在 MIDI 0-127，时间不超过 duration，避免不必要的密集重叠。和弦请用同一时间起始的多个音符表达。',
-      `当前工程：${JSON.stringify(project)}`,
-      `用户意图：${prompt}`,
-    ].join('\n'), 'music_project_plan', musicPlanJsonSchema, musicPlanSchema, resolveAgentConfig(agent), req.abortSignal)
+    const result = await structuredResponse(buildMusicPlanPrompt(project, prompt), 'music_project_plan', musicPlanJsonSchema, musicPlanSchema, resolveAgentConfig(agent), req.abortSignal)
     return res.json({ ...result, source: 'agent' })
   } catch (error) {
     if (isNotConfigured(error)) return res.json({ ...fallbackMusicPlan(project), source: 'fallback', warning: '未配置 Agent API Key，当前沿用现有 MIDI 结构作为可编辑草案。' })

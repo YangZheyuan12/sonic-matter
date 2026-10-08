@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { definitionContext, definitionSummary, emptyGameDefinition, gameBriefComplete, gameDefinitionComplete, seedDefinitionFromIdea, soundDirectionComplete } from './gameDefinition.ts'
+import { definitionContext, definitionSummary, emptyGameDefinition, gameBriefComplete, gameDefinitionComplete, musicDirectionContext, seedDefinitionFromIdea, soundDirectionComplete } from './gameDefinition.ts'
 
 test('空白定义带有可直接选择的声音方向，但游戏资料尚未完成', () => {
   const definition = emptyGameDefinition()
@@ -48,4 +48,15 @@ test('首页灵感只预填空白世界设定，不覆盖用户已有资料', ()
   assert.equal(empty.brief.world, '')
   assert.equal(seedDefinitionFromIdea(seeded, '另一条灵感'), seeded)
   assert.equal(seedDefinitionFromIdea(empty, '   '), empty)
+})
+
+test('音乐创作上下文同时包含玩法与声音方向', () => {
+  const definition = emptyGameDefinition()
+  definition.brief.title = '潮汐档案'
+  definition.brief.coreLoop = '在退潮城市收集记忆'
+  definition.sound.mood = '克制而神秘'
+  const context = musicDirectionContext(definition)
+  assert.match(context, /创作背景（游戏定义）/)
+  assert.match(context, /核心玩法：在退潮城市收集记忆/)
+  assert.match(context, /核心情绪：克制而神秘/)
 })
