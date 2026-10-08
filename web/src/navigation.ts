@@ -8,3 +8,8 @@ export const primaryNavigation = [
 ] as const satisfies ReadonlyArray<{ page: Exclude<Page, 'settings'>; label: string }>
 
 export const myPage: Page = 'settings'
+
+export const homeActions = {
+  define: '定义你的游戏',
+  brainstorm: '对话迸发灵感',
+} as const
