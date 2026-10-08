@@ -3,20 +3,21 @@
 当前生产环境：
 
 ```text
-http://8.141.109.141/          -> Nginx :80 -> Node :8088
-http://8.141.109.141:8088/     -> Node 直连（排错备用）
+https://8.141.109.141/         -> Nginx :443 -> Node :8088
+http://8.141.109.141/          -> 308 跳转 HTTPS
+127.0.0.1:8088                -> Node 内网监听（不对公网开放）
 /api/*                         -> 同一个 Node 进程
 /generated/*                   -> server/generated
 云端工程                       -> server/projects/projects.db
 ```
 
-服务器为 Alibaba Cloud Linux 3，应用目录为 `/opt/sonic-matter`，systemd 服务名为 `sonic-matter`。Node 进程同时托管 `web/dist` 与 API，Nginx 只负责把默认 HTTP 入口反代到 8088。
+服务器为 Alibaba Cloud Linux 3，应用目录为 `/opt/sonic-matter`，systemd 服务名为 `sonic-matter`。Node 进程同时托管 `web/dist` 与 API，Nginx 终止 HTTPS 并把请求反代到本机 8088。
 
 ## 安全边界
 
 - 不要提交或覆盖服务器的 `server/.env`，其中可能包含密钥和部署路径。
-- 更新前备份 `server/projects/projects.db`，它保存 SQLite 云端工程。
-- `server/generated` 与 `server/projects` 都是运行时数据，更新源码时不能删除。
+- 更新前备份 `server/projects/projects.db` 与 `server/auth`；它们分别保存云端工程、账号库和初始凭据。
+- `server/generated`、`server/projects` 与 `server/auth` 都是运行时数据，更新源码时不能删除。
 - 当前没有正式账号认证。分享链接可公开读取；写入权限依赖浏览器本地 owner 串。
 - 公网服务没有通用限流，不应把服务器 API Key 暴露给不受信任的访客。
 
@@ -85,6 +86,19 @@ nginx -t
 systemctl reload nginx
 ```
 
+### 5. 初始化固定双账号（当前认证阶段）
+
+账号不开放注册，固定只有 `admin`（管理员）和 `user`（使用者）。首次部署源码后，在服务器执行：
+
+```bash
+cd /opt/sonic-matter/server
+/opt/sonic-matter/node/bin/node src/auth-init.ts
+chmod 700 auth
+chmod 600 auth/auth.db auth/initial-credentials.txt
+```
+
+命令会为两个账号生成随机初始密码并写入 `auth/initial-credentials.txt`，不会在终端打印密码；重复执行不会重置已有账号。该文件只允许 root 读取，不要复制进 GitHub 或发送到聊天中。当前步骤只建立账号数据库，登录接口和管理员配置页面在后续更新中接入。
+
 ## 日常更新
 
 推荐让服务器从 GitHub 的 `main` 更新，构建前不要删除运行时数据：
@@ -92,6 +106,7 @@ systemctl reload nginx
 ```bash
 cd /opt/sonic-matter
 cp server/projects/projects.db /tmp/sonic-matter-projects.db.bak
+cp -a server/auth /tmp/sonic-matter-auth.bak
 git fetch origin
 git pull --ff-only origin main
 
@@ -121,12 +136,12 @@ curl -I http://127.0.0.1/
 服务器外部：
 
 ```powershell
-curl.exe -fsS http://8.141.109.141/api/health
+curl.exe -kfsS https://8.141.109.141/api/health
+curl.exe -kI https://8.141.109.141/
 curl.exe -I http://8.141.109.141/
-curl.exe -I http://8.141.109.141:8088/
 ```
 
-期望健康接口包含 `"ok":true`，两个页面入口均返回 HTTP 200。
+期望健康接口包含 `"ok":true`，HTTPS 页面返回 HTTP 200，HTTP 入口返回 308。IP 证书受客户端兼容性影响，排错命令使用 `-k`；浏览器访问时仍会校验证书。
 
 ## 回滚
 
@@ -154,8 +169,8 @@ curl -v http://127.0.0.1:8088/api/health
 
 | 现象 | 检查 |
 | --- | --- |
-| 8088 正常、80 返回 502 | Nginx `proxy_pass`、`nginx -t`、Nginx 错误日志 |
+| 8088 正常、HTTPS 返回 502 | Nginx `proxy_pass`、`nginx -t`、Nginx 错误日志 |
 | API 正常、页面 404 | `SERVE_WEB=1` 与 `WEB_DIST_DIR`，确认 `web/dist/index.html` 存在 |
 | 服务反复重启 | `journalctl -u sonic-matter`、Node 版本、`.env` 路径 |
 | 云端工程列表为空 | `PROJECTS_DIR` 是否仍指向原目录，`projects.db` 是否被保留 |
-| 公网 8088 不通但 80 正常 | 直连端口的安全组/防火墙；不影响 Nginx 默认入口 |
+| 公网 8088 不通但 HTTPS 正常 | 这是预期状态；8088 仅供服务器本机访问 |
