@@ -59,7 +59,7 @@ const interpretationSchema = z.object({
   music_mapping: z.object({ tempo: z.number().int().min(40).max(180), key: z.string().min(1).max(30), density: z.number().min(0).max(1), brightness: z.number().min(0).max(1), tension: z.number().min(0).max(1), instruments: z.array(z.string().min(1).max(40)).min(1).max(5) }),
 })
 const conceptResponseSchema = z.object({ concept: z.string().min(1).max(80), interpretations: z.array(interpretationSchema).length(3) })
-const conceptInputSchema = z.object({ concept: z.string().trim().min(1).max(80) }).merge(requestWithAgentSchema)
+const conceptInputSchema = z.object({ concept: z.string().trim().min(1).max(80), context: z.string().trim().max(1200).optional() }).merge(requestWithAgentSchema)
 
 // 工程结构（notes / clips / tracks）统一放在 projectSchema.ts，方便单测。
 const projectEditSchema = z.object({ project: projectSchema, instruction: z.string().trim().min(1).max(500) }).merge(requestWithAgentSchema)
@@ -146,11 +146,12 @@ async function structuredResponse<T>(input: string, name: string, schema: Record
     return rethrowAgentError(error)
   }
 }
-function fallbackConcept(concept: string): z.infer<typeof conceptResponseSchema> {
+function fallbackConcept(concept: string, context = ''): z.infer<typeof conceptResponseSchema> {
+  const contextNote = context ? `结合游戏资料“${context.slice(0, 120)}”` : ''
   return { concept, interpretations: [
-    { id: 'physical', title: `物理${concept}`, summary: `从可观察的形态、材质和运动理解${concept}。`, thesis: `${concept}的重量与尺度可以被听见。`, story_arc: [{ start: 0, end: 3, title: '表面', meaning: '先听见它最直观的轮廓。', musical_role: '稀疏高频、开放音程' }, { start: 3, end: 7, title: '内部', meaning: '进入材质内部，感受隐藏的重量。', musical_role: '低频长音、缓慢叠层' }, { start: 7, end: 10, title: '变化', meaning: '让形态在最后一刻发生变化。', musical_role: '颗粒化碎片、宽阔尾响' }], music_mapping: { tempo: 58, key: 'D minor', density: .28, brightness: .68, tension: .5, instruments: ['glass_bell', 'cello', 'sub_bass'] } },
-    { id: 'psychological', title: `心理${concept}`, summary: `从记忆、情绪和未被说出的部分理解${concept}。`, thesis: `${concept}既是对象，也是人心里的一块回声。`, story_arc: [{ start: 0, end: 3, title: '可见表面', meaning: '保持克制，只留下一个清晰动机。', musical_role: '单音旋律、留白' }, { start: 3, end: 7, title: '水下意识', meaning: '隐藏的情绪逐渐浮上来。', musical_role: '大提琴持续音、低频脉冲' }, { start: 7, end: 10, title: '裂缝出现', meaning: '真正的情绪穿透表面。', musical_role: '和声短暂失衡、明亮噪点' }], music_mapping: { tempo: 72, key: 'C minor', density: .44, brightness: .42, tension: .72, instruments: ['felt_piano', 'cello', 'granular_pad'] } },
-    { id: 'climate', title: `生态${concept}`, summary: `从时间、环境和人与世界的关系理解${concept}。`, thesis: `${concept}也记录着一个系统正在如何变化。`, story_arc: [{ start: 0, end: 3, title: '古老平衡', meaning: '系统维持着缓慢而稳定的呼吸。', musical_role: '规整脉冲、自然泛音' }, { start: 3, end: 7, title: '扰动进入', meaning: '外部压力让节奏变得拥挤。', musical_role: '机械脉冲、密度上升' }, { start: 7, end: 10, title: '留下回声', meaning: '主题淡出，但提醒仍然存在。', musical_role: '稀释旋律、开放尾声' }], music_mapping: { tempo: 84, key: 'A minor', density: .62, brightness: .55, tension: .66, instruments: ['prepared_piano', 'field_texture', 'soft_synth'] } },
+    { id: 'physical', title: `物理${concept}`, summary: `从可观察的形态、材质和运动理解${concept}。${contextNote}`, thesis: `${concept}的重量与尺度可以被听见。`, story_arc: [{ start: 0, end: 3, title: '表面', meaning: '先听见它最直观的轮廓。', musical_role: '稀疏高频、开放音程' }, { start: 3, end: 7, title: '内部', meaning: '进入材质内部，感受隐藏的重量。', musical_role: '低频长音、缓慢叠层' }, { start: 7, end: 10, title: '变化', meaning: '让形态在最后一刻发生变化。', musical_role: '颗粒化碎片、宽阔尾响' }], music_mapping: { tempo: 58, key: 'D minor', density: .28, brightness: .68, tension: .5, instruments: ['glass_bell', 'cello', 'sub_bass'] } },
+    { id: 'psychological', title: `心理${concept}`, summary: `从记忆、情绪和未被说出的部分理解${concept}。${contextNote}`, thesis: `${concept}既是对象，也是人心里的一块回声。`, story_arc: [{ start: 0, end: 3, title: '可见表面', meaning: '保持克制，只留下一个清晰动机。', musical_role: '单音旋律、留白' }, { start: 3, end: 7, title: '水下意识', meaning: '隐藏的情绪逐渐浮上来。', musical_role: '大提琴持续音、低频脉冲' }, { start: 7, end: 10, title: '裂缝出现', meaning: '真正的情绪穿透表面。', musical_role: '和声短暂失衡、明亮噪点' }], music_mapping: { tempo: 72, key: 'C minor', density: .44, brightness: .42, tension: .72, instruments: ['felt_piano', 'cello', 'granular_pad'] } },
+    { id: 'climate', title: `生态${concept}`, summary: `从时间、环境和人与世界的关系理解${concept}。${contextNote}`, thesis: `${concept}也记录着一个系统正在如何变化。`, story_arc: [{ start: 0, end: 3, title: '古老平衡', meaning: '系统维持着缓慢而稳定的呼吸。', musical_role: '规整脉冲、自然泛音' }, { start: 3, end: 7, title: '扰动进入', meaning: '外部压力让节奏变得拥挤。', musical_role: '机械脉冲、密度上升' }, { start: 7, end: 10, title: '留下回声', meaning: '主题淡出，但提醒仍然存在。', musical_role: '稀释旋律、开放尾声' }], music_mapping: { tempo: 84, key: 'A minor', density: .62, brightness: .55, tension: .66, instruments: ['prepared_piano', 'field_texture', 'soft_synth'] } },
   ] }
 }
 function fallbackMusicPlan(project: z.infer<typeof projectSchema>): z.infer<typeof musicPlanSchema> {
@@ -231,14 +232,14 @@ const isNotConfigured = (error: unknown) => toAppError(error).code === 'provider
 
 app.post('/api/concept/interpret', asyncHandler(async (req, res) => {
   const parsed = conceptInputSchema.safeParse(req.body)
-  if (!parsed.success) throw badRequest('concept 必须是 1-80 个字符。', zodDetail(parsed.error))
-  const { concept, agent } = parsed.data
+  if (!parsed.success) throw badRequest('游戏理解输入不正确，请检查焦点文字和游戏资料长度。', zodDetail(parsed.error))
+  const { concept, context, agent } = parsed.data
   const config = resolveAgentConfig(agent)
   try {
-    const result = await structuredResponse(['你是“万物声谱”的概念作曲 Agent。', '请把用户输入的抽象或具象词语，分别从物理、心理、生态/社会三个视角解释，并为每个视角设计一个 10 秒的音乐叙事。', '输出必须严格符合 JSON Schema；不要输出 Markdown。', `用户词语：${concept}`].join('\n'), 'concept_interpretation', conceptJsonSchema, conceptResponseSchema, config, req.abortSignal)
+    const result = await structuredResponse(['你是“万物声谱”的概念作曲 Agent。', '请结合完整游戏资料，把用户焦点分别从物理、心理、生态/社会三个视角解释，并为每个视角设计一个 10 秒的音乐叙事。', '故事弧线、情绪和音乐映射都必须具体响应游戏玩法、世界设定与玩家体验；避免只重复焦点词。', '输出必须严格符合 JSON Schema；不要输出 Markdown。', `理解焦点：${concept}`, context ? `游戏资料与声音方向：\n${context}` : '未提供额外游戏资料。'].join('\n'), 'concept_interpretation', conceptJsonSchema, conceptResponseSchema, config, req.abortSignal)
     return res.json({ ...result, source: 'agent' })
   } catch (error) {
-    if (isNotConfigured(error)) return res.json({ ...fallbackConcept(concept), source: 'fallback', warning: '未配置 API Key，当前使用本地 fallback。' })
+    if (isNotConfigured(error)) return res.json({ ...fallbackConcept(concept, context), source: 'fallback', warning: '未配置 API Key，当前使用本地 fallback。' })
     throw error
   }
 }))

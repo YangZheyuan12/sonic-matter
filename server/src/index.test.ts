@@ -43,11 +43,12 @@ test('没有 API Key 也能通过健康检查，并沿用客户端给的 X-Reque
 })
 
 test('概念解析在没有 Key 时返回本地 fallback 的三个视角', async () => {
-  const response = await post('/api/concept/interpret', JSON.stringify({ concept: '冰山', agent: { apiKey: '' } }))
+  const response = await post('/api/concept/interpret', JSON.stringify({ concept: '潮汐档案', context: '核心玩法：在退潮后的城市收集记忆', agent: { apiKey: '' } }))
   assert.equal(response.status, 200)
-  const body = await response.json() as { source: string; interpretations: unknown[] }
+  const body = await response.json() as { source: string; interpretations: Array<{ summary: string }> }
   assert.equal(body.source, 'fallback')
   assert.equal(body.interpretations.length, 3)
+  assert.match(body.interpretations[0].summary, /核心玩法：在退潮后的城市收集记忆/)
 })
 
 test('坏 JSON 与不合法入参都是 400，并且带上 requestId', async () => {
@@ -59,6 +60,9 @@ test('坏 JSON 与不合法入参都是 400，并且带上 requestId', async () 
 
   const invalid = await post('/api/concept/interpret', JSON.stringify({ concept: '' }))
   assert.equal(invalid.status, 400)
+
+  const oversizedContext = await post('/api/concept/interpret', JSON.stringify({ concept: '潮汐档案', context: 'x'.repeat(1201) }))
+  assert.equal(oversizedContext.status, 400)
 })
 
 test('超过 JSON_BODY_LIMIT 的请求给出 413 + payload_too_large，而不是上游错误', async () => {

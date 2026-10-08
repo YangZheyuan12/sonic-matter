@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { definitionSummary, emptyGameDefinition, gameBriefComplete, gameDefinitionComplete, seedDefinitionFromIdea, soundDirectionComplete } from './gameDefinition.ts'
+import { definitionContext, definitionSummary, emptyGameDefinition, gameBriefComplete, gameDefinitionComplete, seedDefinitionFromIdea, soundDirectionComplete } from './gameDefinition.ts'
 
 test('空白定义带有可直接选择的声音方向，但游戏资料尚未完成', () => {
   const definition = emptyGameDefinition()
@@ -36,6 +36,9 @@ test('完整定义可以整理为后续游戏理解使用的摘要', () => {
   assert.match(definitionSummary(definition), /潮汐档案/)
   assert.match(definitionSummary(definition), /克制而神秘/)
   assert.match(definitionSummary(definition), /有机与电子交织/)
+  assert.match(definitionContext(definition), /游戏名称：潮汐档案/)
+  assert.match(definitionContext(definition), /核心情绪：克制而神秘/)
+  assert.doesNotMatch(definitionContext(definition), /需要避免：/)
 })
 
 test('首页灵感只预填空白世界设定，不覆盖用户已有资料', () => {
