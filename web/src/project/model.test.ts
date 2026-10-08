@@ -9,6 +9,7 @@ import {
   normalizeProject,
   primaryMelodyTrack,
   projectDuration,
+  projectWithGameDefinition,
   trackGain,
   trackPan,
   trackStart,
@@ -16,6 +17,7 @@ import {
   type Project,
   type Track,
 } from './model.ts'
+import { emptyGameDefinition } from './gameDefinition.ts'
 
 // 与源码同目录，用 Node 自带的测试运行器执行：node --test "src/**/*.test.ts"
 // 不引入 vitest / jsdom，保证零新增依赖也能在 CI 与本地离线跑通。
@@ -147,6 +149,23 @@ test('normalizeProject 修复脏数据而不是直接崩溃', () => {
   assert.equal(second.kind, 'audio')
   assert.equal(second.notes, undefined)
   assert.equal(second.clip, '/generated/a.wav')
+})
+
+test('游戏定义随工程文档往返，旧工程仍可加载，损坏字段会补默认值并限长', () => {
+  const definition = emptyGameDefinition()
+  definition.brief.title = '潮汐档案'
+  definition.brief.world = '被海水周期性淹没的港口'
+  definition.sound.avoid = '避免过度英雄化'
+  const saved = projectWithGameDefinition(project([midiTrack('melody')]), definition)
+  assert.deepEqual(normalizeProject(JSON.parse(JSON.stringify(saved))).gameDefinition, definition)
+
+  const legacy = normalizeProject({ tracks: [{ id: 'melody', kind: 'midi' }] })
+  assert.equal(legacy.gameDefinition, undefined)
+
+  const partial = normalizeProject({ tracks: [{ id: 'melody', kind: 'midi' }], gameDefinition: { brief: { title: 'x'.repeat(130) }, sound: {} } })
+  assert.equal(partial.gameDefinition?.brief.title.length, 120)
+  assert.equal(partial.gameDefinition?.brief.genre, '')
+  assert.equal(partial.gameDefinition?.sound.mood, '克制而神秘')
 })
 
 test('normalizeProject 保留队友版本的老裁剪字段，但不会把 NaN 写进工程', () => {

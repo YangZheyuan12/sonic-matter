@@ -34,6 +34,17 @@ test('老工程的单片段字段与 MIDI 轨仍然能提交上来', () => {
   assert.equal(midi.tracks[0].notes?.length, 1)
 })
 
+test('可选游戏定义通过校验并限制每个文本字段长度', () => {
+  const gameDefinition = {
+    brief: { title: '潮汐档案', genre: '叙事探索', coreLoop: '收集记忆', world: '近未来港口', playerExperience: '从孤独走向释然' },
+    sound: { mood: '克制而神秘', pace: '舒缓流动', texture: '有机与电子交织', avoid: '' },
+  }
+  const parsed = projectSchema.parse({ ...project([audioTrack()]), gameDefinition })
+  assert.deepEqual(parsed.gameDefinition, gameDefinition)
+  assert.equal(projectSchema.safeParse({ ...project([audioTrack()]), gameDefinition: { ...gameDefinition, brief: { ...gameDefinition.brief, world: 'x'.repeat(1001) } } }).success, false)
+  assert.equal(projectSchema.safeParse(project([audioTrack()])).success, true, '旧工程缺少游戏定义仍兼容')
+})
+
 test('前端多塞的未知字段会被剥掉，不会让请求 400', () => {
   const parsed = projectSchema.parse({ ...project([audioTrack()]), somethingNew: 'x' })
   assert.equal('somethingNew' in parsed, false)
@@ -56,4 +67,3 @@ test('字符串与数组都有上限，挡住整包塞爆请求体的做法', ()
   assert.equal(projectSchema.safeParse(project([audioTrack({ name: 'x'.repeat(120) })])).success, true)
   assert.equal(trackSchema.safeParse(audioTrack({ clips: undefined, clip: 'local-sfx:' + 'a'.repeat(9000) })).success, true)
 })
-

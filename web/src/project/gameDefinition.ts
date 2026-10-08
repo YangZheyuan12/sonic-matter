@@ -18,10 +18,51 @@ export type GameDefinition = {
   sound: SoundDirection
 }
 
+export const GAME_DEFINITION_LIMITS = {
+  title: 120,
+  genre: 160,
+  coreLoop: 1000,
+  world: 1000,
+  playerExperience: 1000,
+  mood: 160,
+  pace: 160,
+  texture: 160,
+  avoid: 1000,
+} as const
+
 export const emptyGameDefinition = (): GameDefinition => ({
   brief: { title: '', genre: '', coreLoop: '', world: '', playerExperience: '' },
   sound: { mood: '克制而神秘', pace: '舒缓流动', texture: '有机与电子交织', avoid: '' },
 })
+
+/** 旧工程可以没有定义；导入的残缺字段则补齐默认值并限制文本长度。 */
+export function normalizeGameDefinition(value: unknown): GameDefinition | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const input = value as { brief?: unknown; sound?: unknown }
+  const brief = input.brief && typeof input.brief === 'object' && !Array.isArray(input.brief)
+    ? input.brief as Partial<GameBrief>
+    : {}
+  const sound = input.sound && typeof input.sound === 'object' && !Array.isArray(input.sound)
+    ? input.sound as Partial<SoundDirection>
+    : {}
+  const defaults = emptyGameDefinition()
+  const limit = (field: unknown, max: number, fallback: string) => typeof field === 'string' ? field.slice(0, max) : fallback
+  return {
+    brief: {
+      title: limit(brief.title, GAME_DEFINITION_LIMITS.title, ''),
+      genre: limit(brief.genre, GAME_DEFINITION_LIMITS.genre, ''),
+      coreLoop: limit(brief.coreLoop, GAME_DEFINITION_LIMITS.coreLoop, ''),
+      world: limit(brief.world, GAME_DEFINITION_LIMITS.world, ''),
+      playerExperience: limit(brief.playerExperience, GAME_DEFINITION_LIMITS.playerExperience, ''),
+    },
+    sound: {
+      mood: limit(sound.mood, GAME_DEFINITION_LIMITS.mood, defaults.sound.mood),
+      pace: limit(sound.pace, GAME_DEFINITION_LIMITS.pace, defaults.sound.pace),
+      texture: limit(sound.texture, GAME_DEFINITION_LIMITS.texture, defaults.sound.texture),
+      avoid: limit(sound.avoid, GAME_DEFINITION_LIMITS.avoid, ''),
+    },
+  }
+}
 
 export const gameBriefComplete = (brief: GameBrief) => Boolean(
   brief.title.trim() && brief.genre.trim() && brief.coreLoop.trim() && brief.world.trim() && brief.playerExperience.trim(),

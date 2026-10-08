@@ -42,12 +42,29 @@ export const trackSchema = z.object({
   start: z.number().min(0).max(120).optional(),
 })
 
+export const gameDefinitionSchema = z.object({
+  brief: z.object({
+    title: z.string().max(120),
+    genre: z.string().max(160),
+    coreLoop: z.string().max(1000),
+    world: z.string().max(1000),
+    playerExperience: z.string().max(1000),
+  }),
+  sound: z.object({
+    mood: z.string().max(160),
+    pace: z.string().max(160),
+    texture: z.string().max(160),
+    avoid: z.string().max(1000),
+  }),
+})
+
 export const projectSchema = z.object({
   title: z.string().min(1).max(120),
   tempo: z.number().min(20).max(300),
   key: z.string().max(30),
   duration: z.number().min(1).max(120).optional(),
   masterGain: z.number().min(0).max(1).optional(),
+  gameDefinition: gameDefinitionSchema.optional(),
   concept: z.object({
     word: z.string().max(80),
     title: z.string().max(120),

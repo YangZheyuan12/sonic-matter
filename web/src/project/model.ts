@@ -1,3 +1,5 @@
+import { emptyGameDefinition, normalizeGameDefinition, type GameDefinition } from './gameDefinition.ts'
+
 export type Note = {
   id: string
   pitch: number
@@ -53,6 +55,7 @@ export type Project = {
   duration?: number
   masterGain?: number
   concept?: { word: string; title: string; story: Story[] }
+  gameDefinition?: GameDefinition
   tracks: Track[]
 }
 
@@ -176,8 +179,14 @@ export function normalizeProject(value: unknown): Project {
     duration: Math.max(1, Math.min(120, finite(input.duration, 10))),
     masterGain: Math.max(0, Math.min(1, finite(input.masterGain, .9))),
     concept: input.concept,
+    gameDefinition: normalizeGameDefinition(input.gameDefinition),
     tracks,
   }
+}
+
+/** 把独立编辑的游戏定义合并进工程文档，不将表单输入写入音乐撤销历史。 */
+export function projectWithGameDefinition(project: Project, gameDefinition: GameDefinition): Project {
+  return { ...project, gameDefinition: normalizeGameDefinition(gameDefinition) ?? emptyGameDefinition() }
 }
 
 export function loadLocalProject(fallback: Project): Project {

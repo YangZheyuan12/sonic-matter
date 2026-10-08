@@ -16,10 +16,10 @@ import TrackList from './studio/TrackList'
 import type { HistoryState } from './project/history'
 import { createHistory, currentProject, pushHistory, redo, undo } from './project/history'
 import { canRemoveTrack, createTrack, duplicateTrack, insertTrack, moveTrack, removeTrack, renameTrack, setTrackInstrument } from './project/tracks'
-import { LOCAL_SOUND_CLIP_PREFIX, loadLocalProject, melodyTrackTemplate, normalizeProject, primaryMelodyTrack, projectDuration, pitchName, type Note, type Project, type Track } from './project/model'
+import { LOCAL_SOUND_CLIP_PREFIX, loadLocalProject, melodyTrackTemplate, normalizeProject, primaryMelodyTrack, projectDuration, projectWithGameDefinition, pitchName, type Note, type Project, type Track } from './project/model'
 import { clipDurationFor, clipsOf, createClip, setTrackClips, type Clip } from './project/clips'
 import { homeActions, myPage, primaryNavigation, type Page } from './navigation'
-import { emptyGameDefinition, gameBriefComplete, seedDefinitionFromIdea, type GameDefinition } from './project/gameDefinition'
+import { emptyGameDefinition, GAME_DEFINITION_LIMITS, gameBriefComplete, seedDefinitionFromIdea, type GameDefinition } from './project/gameDefinition'
 import { buildUnderstandingInput, mapAgentConcepts, type Concept, type ConceptId } from './project/gameUnderstanding'
 import AbstractLab from './studio/AbstractLab'
 
@@ -50,7 +50,8 @@ export default function App() {
   const playbackRequest = useRef(0)
   const [page, setPage] = useState<Page>('explore'); const [history, setHistory] = useState(() => createHistory(loadLocalProject(base))); const project = currentProject(history); const [activeTrackId, setActiveTrackId] = useState(''); const midiTracks = project.tracks.filter(track => track.kind === 'midi'); const currentTrackId = midiTracks.some(track => track.id === activeTrackId) ? activeTrackId : (midiTracks[0]?.id ?? ''); const [recording, setRecording] = useState(false); const [playing, setPlaying] = useState(false); const [playhead, setPlayhead] = useState(0); const [conceptWord, setConceptWord] = useState('冰山'); const [choice, setChoice] = useState<ConceptId>('psychological'); const [concepts, setConcepts] = useState<Record<ConceptId, Concept> | null>(null); const conceptTask = useAsyncTask(); const conceptLoading = conceptTask.loading; const editTask = useAsyncTask(); const agentLoading = editTask.loading; const soundTask = useAsyncTask(); const soundLoading = soundTask.loading; const musicTask = useAsyncTask(); const musicLoading = musicTask.loading; const [soundText, setSoundText] = useState('远处冰层断裂，落入深海，带有空旷回声'); const [soundReady, setSoundReady] = useState(false); const [soundPlan, setSoundPlan] = useState<SoundPlan | null>(null); const [soundAudio, setSoundAudio] = useState<GeneratedAudio | null>(null); const [mixer, setMixer] = useState({ length: 2.4, density: 42, brightness: 64, space: 78, compact: 35 }); const [notice, setNotice] = useState('准备好把抽象灵感变成声音了吗？'); const [agentMode, setAgentMode] = useState<AgentMode>('local'); const [agentInstruction, setAgentInstruction] = useState(''); const [apiConfig, setApiConfig] = useState<ApiConfig>(() => loadApiConfig()); const [preferences, setPreferences] = useState<Preferences>(() => loadPreferences()); const [account, setAccount] = useState(loadAccount); const audio = useRef<AudioContext | null>(null); const canvas = useRef<HTMLCanvasElement>(null); const projectFile = useRef<HTMLInputElement>(null); const gesture = useRef({ active: false, x: 0, y: 0, at: 0, cell: '' }); const recordingStarted = useRef(0); const playbackStarted = useRef(0); const playbackOffset = useRef(0); const playbackFrame = useRef(0); const cursor = useRef({ x: 0, y: 0, active: false }); const particles = useRef<{ x: number; y: number; r: number; life: number; color: string }[]>([]); const currentNotes = useMemo(() => primaryMelodyTrack(project)?.notes ?? [], [project])
   const [homeBrainstormOpen, setHomeBrainstormOpen] = useState(false)
-  const [gameDefinition, setGameDefinition] = useState<GameDefinition>(emptyGameDefinition)
+  const [gameDefinition, setGameDefinition] = useState<GameDefinition>(() => project.gameDefinition ?? emptyGameDefinition())
+  const persistedProject = useMemo(() => projectWithGameDefinition(project, gameDefinition), [project, gameDefinition])
   const [definitionStep, setDefinitionStep] = useState<'brief' | 'sound'>('brief')
   const [soundLab, setSoundLab] = useState<'abstract' | 'fine'>('abstract')
   // 云端工程（Demo 级）：身份是本机随机串，分享靠 ?p=<id>。实现见 web/src/cloud/cloud.ts。
@@ -82,7 +83,7 @@ export default function App() {
     addEventListener('keydown', onKeyDown)
     return () => removeEventListener('keydown', onKeyDown)
   }, [])
-  useEffect(() => { localStorage.setItem('sonic-matter-project', JSON.stringify(project)) }, [project])
+  useEffect(() => { localStorage.setItem('sonic-matter-project', JSON.stringify(persistedProject)) }, [persistedProject])
   const go = (next: Page) => { setPage(next); setNotice(next === 'explore' ? '移动光标，寻找你的下一颗音符。' : '工程状态会在页面之间持续保留。') }
   useEffect(() => { document.documentElement.dataset.theme = preferences.theme; document.documentElement.dataset.font = preferences.font; document.documentElement.dataset.fontSize = preferences.fontSize; document.documentElement.dataset.motion = preferences.reducedMotion ? 'reduced' : 'full'; localStorage.setItem('sonic-matter-preferences', JSON.stringify(preferences)) }, [preferences])
   const agentBody = (body: object) => ({ ...body, agent: { baseUrl: apiConfig.baseUrl || undefined, apiKey: apiConfig.apiKey || undefined, model: apiConfig.model || undefined, protocol: apiConfig.protocol } })
@@ -100,16 +101,16 @@ export default function App() {
   const exportMidi = async () => { try { downloadBlob(await apiFetchBlob('/api/export/midi', { project }), `${project.title}.mid`); setNotice('MIDI 已导出。') } catch (error) { setNotice(errorMessage(error, 'MIDI 导出失败。')) } }
   const exportWav = async () => { try { setNotice('正在离线渲染完整工程…'); const rendered = await renderProjectAudio(project); downloadBlob(audioBufferToWav(rendered), `${project.title}.wav`); setNotice('MIDI 与真实音频轨已混音并导出 WAV。') } catch (error) { setNotice(error instanceof Error ? error.message : 'WAV 导出失败。') } }
   const exportMp3 = async () => { try { setNotice('正在离线渲染完整工程…'); const rendered = await renderProjectAudio(project); downloadBlob(audioBufferToMp3(rendered), `${project.title}.mp3`); setNotice('MIDI 与真实音频轨已混音并导出 MP3。') } catch (error) { setNotice(error instanceof Error ? error.message : 'MP3 导出失败。') } }
-  const saveProject = () => { downloadBlob(new Blob([JSON.stringify(project, null, 2)], { type: 'application/json' }), `${project.title}.sonic.json`); setNotice('工程文件已保存；浏览器内也会持续自动保存。') }
-  const openProject = async (file: File) => { try { const next = normalizeProject(JSON.parse(await file.text())); stopPlayback(true); resetHistory(next, `打开工程「${next.title}」`); setNotice(`已打开工程“${next.title}”。`) } catch (error) { setNotice(error instanceof Error ? error.message : '工程文件读取失败。') } finally { if (projectFile.current) projectFile.current.value = '' } }
+  const saveProject = () => { downloadBlob(new Blob([JSON.stringify(persistedProject, null, 2)], { type: 'application/json' }), `${project.title}.sonic.json`); setNotice('工程文件已保存；浏览器内也会持续自动保存。') }
+  const openProject = async (file: File) => { try { const next = normalizeProject(JSON.parse(await file.text())); stopPlayback(true); resetHistory(next, `打开工程「${next.title}」`); setGameDefinition(next.gameDefinition ?? emptyGameDefinition()); setNotice(`已打开工程“${next.title}”。`) } catch (error) { setNotice(error instanceof Error ? error.message : '工程文件读取失败。') } finally { if (projectFile.current) projectFile.current.value = '' } }
   // 所有工程修改都走这里：updater 返回同一引用表示没有变化，也就不会产生历史。
   const applyProject = (label: string, updater: (previous: Project) => Project, key = '') => setHistory(current => pushHistory(current, updater(currentProject(current)), label, { key }))
   const resetHistory = (next: Project, label: string) => setHistory(createHistory(next, label))
   /** 载入云端工程并接管为当前工程。第一个同步动作就是发请求，所以可以在 effect 里直接调用。 */
-  const adoptCloudProject = async (id: string, shared = false) => { try { const data = await loadCloudProject(id); const next = normalizeProject(data.project); stopPlayback(true); resetHistory(next, `${shared ? '打开分享的' : '打开云端工程'}「${next.title}」`); setCloudId(data.id); setCloudNotice(`已打开云端工程“${next.title}”（${formatWhen(data.updatedAt)}更新，第 ${data.revision} 版）。`) } catch (error) { setCloudNotice(errorMessage(error, shared ? '这个分享链接打不开：它可能已被删除，或者链接不完整。' : '打开云端工程失败。')) } }
+  const adoptCloudProject = async (id: string, shared = false) => { try { const data = await loadCloudProject(id); const next = normalizeProject(data.project); stopPlayback(true); resetHistory(next, `${shared ? '打开分享的' : '打开云端工程'}「${next.title}」`); setGameDefinition(next.gameDefinition ?? emptyGameDefinition()); setCloudId(data.id); setCloudNotice(`已打开云端工程“${next.title}”（${formatWhen(data.updatedAt)}更新，第 ${data.revision} 版）。`) } catch (error) { setCloudNotice(errorMessage(error, shared ? '这个分享链接打不开：它可能已被删除，或者链接不完整。' : '打开云端工程失败。')) } }
   const openCloud = (id: string) => { setCloudBusy(true); return adoptCloudProject(id).finally(() => setCloudBusy(false)) }
   const refreshClouds = async () => { setCloudBusy(true); try { const data = await listCloudProjects(cloudOwner); setClouds(data.projects); setCloudNotice(`这台浏览器在云端有 ${data.owned} 个工程（上限 ${data.perOwnerLimit} 个）。`) } catch (error) { setCloudNotice(errorMessage(error, '云端工程列表读取失败。')) } finally { setCloudBusy(false) } }
-  const saveToCloud = async () => { setCloudBusy(true); try { const saved = await saveCloudProject(cloudOwner, project, cloudId); setCloudId(saved.id); setCloudNotice(`${saved.revision > 1 ? `已更新云端工程（第 ${saved.revision} 版）` : '已保存到云端'}，分享链接：${shareLink(saved.id, location.origin)}`); setClouds((await listCloudProjects(cloudOwner)).projects) } catch (error) { setCloudNotice(errorMessage(error, '保存到云端失败。')) } finally { setCloudBusy(false) } }
+  const saveToCloud = async () => { setCloudBusy(true); try { const saved = await saveCloudProject(cloudOwner, persistedProject, cloudId); setCloudId(saved.id); setCloudNotice(`${saved.revision > 1 ? `已更新云端工程（第 ${saved.revision} 版）` : '已保存到云端'}，分享链接：${shareLink(saved.id, location.origin)}`); setClouds((await listCloudProjects(cloudOwner)).projects) } catch (error) { setCloudNotice(errorMessage(error, '保存到云端失败。')) } finally { setCloudBusy(false) } }
   const deleteCloud = async (id: string) => { if (!confirm('删除后这个分享链接会立刻失效，确定删除吗？')) return; setCloudBusy(true); try { await removeCloudProject(cloudOwner, id); setClouds(list => list.filter(item => item.id !== id)); if (id === cloudId) setCloudId(''); setCloudNotice('云端工程已删除。') } catch (error) { setCloudNotice(errorMessage(error, '删除云端工程失败。')) } finally { setCloudBusy(false) } }
   const copyCloudLink = async () => { if (!cloudId) return; const link = shareLink(cloudId, location.origin); setCloudNotice((await copyText(link)) ? `分享链接已复制：${link}` : `浏览器不允许自动复制，请手动复制：${link}`) }
   const cloud: CloudBarProps = { cloudId, busy: cloudBusy, notice: cloudNotice, projects: clouds, onSave: () => void saveToCloud(), onRefresh: () => void refreshClouds(), onOpen: id => void openCloud(id), onDelete: id => void deleteCloud(id), onCopyLink: () => void copyCloudLink() }
@@ -154,8 +155,8 @@ function Explore({ canvas, recording, move, start, end, setRecording, play, play
 }
 function GameDefinitionPage({ definition, setDefinition, setConceptWord, step, setStep, goStudio, goSound }: { definition: GameDefinition; setDefinition: React.Dispatch<React.SetStateAction<GameDefinition>>; setConceptWord: (value: string) => void; step: 'brief' | 'sound'; setStep: (step: 'brief' | 'sound') => void; goStudio: () => void; goSound: () => void }) {
   const [error, setError] = useState('')
-  const updateBrief = (key: keyof GameDefinition['brief'], value: string) => setDefinition(current => ({ ...current, brief: { ...current.brief, [key]: value } }))
-  const updateSound = (key: keyof GameDefinition['sound'], value: string) => setDefinition(current => ({ ...current, sound: { ...current.sound, [key]: value } }))
+  const updateBrief = (key: keyof GameDefinition['brief'], value: string) => setDefinition(current => ({ ...current, brief: { ...current.brief, [key]: value.slice(0, GAME_DEFINITION_LIMITS[key]) } }))
+  const updateSound = (key: keyof GameDefinition['sound'], value: string) => setDefinition(current => ({ ...current, sound: { ...current.sound, [key]: value.slice(0, GAME_DEFINITION_LIMITS[key]) } }))
   const continueToSound = () => {
     if (!gameBriefComplete(definition.brief)) {
       setError('请先完整填写游戏名称、类型、核心玩法、世界设定和玩家体验。')
