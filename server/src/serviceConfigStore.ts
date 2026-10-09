@@ -18,7 +18,7 @@ export type ServiceConfigStatus = {
   providers: Record<ProviderName, { configured: boolean; updatedAt: string | null }>
 }
 
-/** 管理员密钥单独加密落库，不自动启用尚未接入权限控制的创作接口。 */
+/** 管理员密钥单独加密落库，只供服务器内受登录保护的平台生成接口使用。 */
 export class ServiceConfigStore {
   readonly databasePath: string
   #dir: string

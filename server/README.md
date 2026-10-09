@@ -4,15 +4,15 @@
 
 ## 配置方式
 
-网站新增了“设置 → Agent”页面，可以一次性配置三类服务：
+网站的“我的 → Agent”页面配置用户自己的 OpenAI 兼容 Agent：
 
-- Agent：Base URL、API Key、Model、Responses API 或 Chat Completions 协议
-- 音乐服务：Base URL、API Key、Model，以及“结构化工程（推荐）/ 直接 AI 音频增强”模式
-- 音效服务：Base URL、API Key、Model
+- Base URL、API Key、Model
+- Responses API 或 Chat Completions 协议
+- 音乐生成方式：“结构化工程（推荐）”或“直接 AI 音频增强”
 
-音乐和音效凭证与 Agent 凭证相互独立；可以只填写 Agent，音乐 API 与音效 API 都是可选增强层。
+Replicate 音乐和 ElevenLabs 音效是登录后可用的平台增强服务。它们的密钥只由管理员在“我的 → 账户”配置，普通用户无需也不能在浏览器填写。
 
-配置可以只保存在当前页面，也可以选择保存在当前浏览器的 localStorage。API Key 不会写入项目文件。
+个人 Agent 配置保存在当前浏览器的 localStorage；只有勾选“记住 API Key”才会持久化个人 Key。平台音乐/音效密钥不会写入 localStorage 或项目文件。
 
 也可以使用服务端环境变量作为默认配置。复制 `.env.example` 为 `.env`：
 
@@ -21,9 +21,7 @@ OPENAI_API_KEY=你的_api_key
 OPENAI_BASE_URL=https://api.openai.com/v1
 OPENAI_MODEL=gpt-4.1-mini
 OPENAI_PROTOCOL=responses
-REPLICATE_API_TOKEN=你的_replicate_token
 MUSIC_REPLICATE_MODEL=meta/musicgen
-ELEVENLABS_API_KEY=你的_elevenlabs_key
 PORT=8787
 # 服务端行为
 CORS_ORIGIN=
@@ -154,6 +152,6 @@ npm run dev
 
 密钥以 AES-256-GCM 加密存入 `AUTH_DIR/service-config.db`，随机 IV 和供应商绑定的 AAD 防止密文篡改与串用。接口不会回显明文、密文或末尾字符；前端不会保存平台密钥到 localStorage。`SONIC_CONFIG_KEY` 必须是 32 随机字节的 hex 或标准 base64，缺失时拒绝保存，错误参数无法覆盖已有配置。更新不会生成新的保护密钥。备份必须同时保留数据库和 `.env` 中的保护密钥。
 
-平台配置目前只完成保存，未接入生成服务；AI 接口权限与平台密钥调用留待下一步，保存不会调用供应商或扣费。现有个人 Agent / 音频服务设置保留。生产配置、Cookie 安全设置和登录限流见 [`deploy/README.md`](../deploy/README.md)。
+`POST /api/music/generate` 与 `POST /api/sfx/generate` 只允许已登录的管理员或使用者账号调用，并从上述加密配置读取平台密钥。客户端提交的音乐/音效密钥、供应商地址或模型会被拒绝；服务器固定调用官方 HTTPS 地址和受控模型。保存配置本身不会调用供应商或扣费，清除某项密钥后，对应生成接口立即停止工作。个人 OpenAI Agent 配置仍由用户在当前浏览器管理。生产配置、Cookie 安全设置和登录限流见 [`deploy/README.md`](../deploy/README.md)。
 
 没有配置 API Key 时，概念、音效计划和音乐工程计划接口会返回本地 fallback，方便继续演示；工程编辑会明确提示需要真实 Agent。

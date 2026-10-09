@@ -1,7 +1,7 @@
 import { test, type TestContext } from 'node:test'
 import assert from 'node:assert/strict'
 import { ApiError } from '../api/client.ts'
-import { buildConfigPatch, loadSession, loginAccount, logoutAccount, loadServiceConfig, saveServiceConfig } from './api.ts'
+import { buildConfigPatch, loadSession, loginAccount, logoutAccount, loadServiceConfig, runPlatformGeneration, saveServiceConfig } from './api.ts'
 
 function stub(t: TestContext, handler: (url: string, init: RequestInit) => Response | Promise<Response>) {
   const original = globalThis.fetch
@@ -36,6 +36,22 @@ test('退出和保存均带 JSON 与保护头；退出发送空对象而非空�
   for (const call of calls) {
     assert.equal(new Headers(call.init.headers).get('content-type'), 'application/json')
     assert.equal(new Headers(call.init.headers).get('x-sonic-auth'), '1')
+  }
+})
+
+test('平台音乐与音效生成统一发送登录保护头且不附带浏览器平台配置', async t => {
+  const calls: { url: string; init: RequestInit }[] = []
+  stub(t, (url, init) => { calls.push({ url, init }); return json({ url: '/generated/test.wav' }) })
+  await runPlatformGeneration('/api/music/generate', { prompt: '潮汐', duration_seconds: 10 })
+  await runPlatformGeneration('/api/sfx/generate', { description: '水滴', mixer: { length: 2 } })
+  assert.deepEqual(calls.map(call => call.url), ['/api/music/generate', '/api/sfx/generate'])
+  for (const call of calls) {
+    assert.equal(call.init.method, 'POST')
+    assert.equal(new Headers(call.init.headers).get('x-sonic-auth'), '1')
+    const body = JSON.parse(String(call.init.body)) as Record<string, unknown>
+    assert.equal('apiKey' in body, false)
+    assert.equal('baseUrl' in body, false)
+    assert.equal('model' in body, false)
   }
 })
 

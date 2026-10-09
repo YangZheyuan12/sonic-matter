@@ -22,6 +22,8 @@ export const loadServiceConfig = (options: ApiOptions = {}) => apiJson<ServiceCo
 export const saveServiceConfig = (patch: ConfigPatch) => apiJson<ServiceConfigStatus>('/api/admin/service-config', {
   method: 'PUT', headers: protection, body: patch,
 })
+export const runPlatformGeneration = <T>(path: '/api/music/generate' | '/api/sfx/generate', body: unknown, options: ApiOptions = {}) =>
+  apiJson<T>(path, { ...options, method: 'POST', headers: protection, body })
 
 /** 空白输入保留已有密钥，显式选择清除才删除，避免将状态占位符写成密钥。 */
 export function buildConfigPatch(draft: ConfigDraft, clear: Record<Provider, boolean>): ConfigPatch {

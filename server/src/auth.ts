@@ -20,7 +20,7 @@ const loginSchema = z.object({
   password: z.string().min(1).max(256),
 }).strict()
 
-const unauthorized = () => new AppError('请先登录后再使用此功能。', { code: 'unauthorized', status: 401 })
+const unauthorized = () => new AppError('请在“我的 → 账户”登录后再使用此功能。', { code: 'unauthorized', status: 401 })
 
 /** 没有第三方 Cookie 依赖；拒绝重复和非标准令牌，避免 Cookie 解析歧义。 */
 function readCookie(req: Request, name: string): string | undefined {

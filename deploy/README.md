@@ -18,8 +18,8 @@ http://8.141.109.141/          -> 308 跳转 HTTPS
 - 不要提交或覆盖服务器的 `server/.env`，其中可能包含密钥和部署路径。
 - 更新前备份 `server/projects/projects.db` 与 `server/auth`；它们分别保存云端工程、账号库和初始凭据。
 - `server/generated`、`server/projects` 与 `server/auth` 都是运行时数据，更新源码时不能删除。
-- 已提供固定双账号登录接口、持久化会话及登录限流，前端“我的 → 账户”支持真实登录与管理员平台密钥配置；AI 接口权限接入将在下一步完成。
-- 现有创作 API 暂未应用登录守卫。分享链接可公开读取；工程写入权限仍依赖浏览器本地 owner 串。管理员加密配置尚未接入生成，可提前保存；完成权限接入前，不应在旧环境变量 `REPLICATE_API_TOKEN` / `ELEVENLABS_API_KEY` 中配置公共付费密钥。
+- 已提供固定双账号登录、持久化会话及登录限流；前端“我的 → 账户”支持真实登录与管理员平台密钥配置。
+- 平台音乐与音效生成必须登录，并只使用管理员加密保存的密钥；旧环境变量不能绕过配置状态。分享链接仍可公开读取，工程写入权限仍依赖浏览器本地 owner 串；本地试听、结构化计划和 MIDI 导出无需登录。
 
 ## 首次部署
 
@@ -116,11 +116,17 @@ chmod 600 auth/auth.db auth/initial-credentials.txt
 
 会话绝对有效期 7 天，登录时轮换当前会话；同一账号允许最多 20 个浏览器会话并存，超出时淘汰最早会话。会话令牌仅以 SHA-256 哈希存入 `auth.db`，退出即时撤销，重启不丢失会话；禁用账号立即使其会话无效。登录尝试每 IP 每 15 分钟最多 10 次、每账号最多 30 次，超限返回 `429 / login_rate_limited` 和 `Retry-After`，计数同样在 SQLite 持久化。
 
-`createAuth` 导出的 `requireAccount`、`requireRole` 和 `protectMutation` 已用于管理员配置接口，AI 生成接口守卫留待下一步。“我的 → 账户”使用真实服务器会话，旧 localStorage Demo 登录标记会移除。
+`createAuth` 导出的 `requireAccount`、`requireRole` 和 `protectMutation` 已用于管理员配置及平台音乐/音效生成接口。“我的 → 账户”使用真实服务器会话，旧 localStorage Demo 登录标记会移除。
 
 ## 管理员平台密钥（第四步）
 
-管理员登录后在账户页配置 Replicate / ElevenLabs。普通用户看不到配置表单，直接请求接口也会返回 403；访客返回 401。输入框始终为空白，留空保留原密钥，勾选清除并保存才删除。保存只更新服务器配置，尚不启用平台生成服务。
+管理员登录后在账户页配置 Replicate / ElevenLabs。普通用户看不到配置表单，直接请求配置接口会返回 403；访客返回 401。输入框始终为空白，留空保留原密钥，勾选清除并保存才删除。保存本身不会调用供应商。
+
+已登录的管理员和使用者均可调用 `/api/music/generate` 与 `/api/sfx/generate`。这两个写接口要求同源 JSON、有效会话和 `X-Sonic-Auth: 1`，且只读取服务器的加密密钥；浏览器提交的音乐/音效密钥、Base URL 或模型会被拒绝。平台密钥不会返回前端，也不会写入浏览器存储。清除密钥后，对应生成接口返回 `503 / provider_not_configured`；本地试听、结构化音乐/音效计划和 MIDI 导出不受影响。
+
+## 登录后平台生成（第五步）
+
+第五步将管理员保存的平台密钥接入真实音乐和音效生成。Replicate 固定使用服务器允许的 `MUSIC_REPLICATE_MODEL` 与官方 API；ElevenLabs 固定使用官方 Sound Generation API。旧版 `REPLICATE_API_TOKEN` / `ELEVENLABS_API_KEY` 环境变量不再作为生成凭据，避免绕过管理员的配置状态与即时清除操作。
 
 `SONIC_CONFIG_KEY` 是服务器 `.env` 中的 32 字节保护密钥（64 位 hex 或标准 base64），仅首次配置时生成，不能随部署重新生成。服务使用 AES-256-GCM 保存到 `server/auth/service-config.db`，数据库文件权限 600。首次设置可用 `node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"` 在服务器本地生成并手动写入 `.env`，不要将输出发送到聊天或提交 Git。重启服务后配置生效；缺少参数时页面提示保护未就绪，保存返回 503。已有配置无法解密时保存拒绝覆盖，需恢复正确保护密钥或备份。
 

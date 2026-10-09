@@ -73,6 +73,6 @@ export default function AdminServiceConfig({ onNotice, onSessionExpired }: {
     </div>
     {error && <p role="alert">{error}</p>}
     <div className="settings-actions"><button className="primary" type="submit" disabled={busy || loading || !status?.encryptionReady}>{busy ? '保存中…' : '保存平台配置'}</button><button className="secondary" type="button" disabled={busy || loading} onClick={() => { setLoading(true); setReload(value => value + 1) }}>刷新状态</button></div>
-    <p className="security-note">平台生成服务暂未开放，保存密钥不会立即发起生成或扣费。</p>
+    <p className="security-note">保存后，已登录账号可使用对应平台生成服务；保存本身不会发起生成或扣费。清除密钥后将停止新的生成请求。</p>
   </form>
 }

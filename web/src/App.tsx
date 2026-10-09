@@ -24,11 +24,12 @@ import { buildMusicPrompt } from './project/musicPrompt'
 import { buildUnderstandingInput, mapAgentConcepts, type Concept, type ConceptId } from './project/gameUnderstanding'
 import AbstractLab from './studio/AbstractLab'
 import AccountPanel from './account/AccountPanel'
+import { runPlatformGeneration } from './account/api'
+import { loadPersonalConfig, normalizePersonalConfig, type ApiConfig } from './account/personalConfig'
 
 type AgentOperation = { op: 'add_track'; track: Track } | { op: 'update_project'; path: 'title' | 'tempo' | 'key'; value: string | number } | { op: 'update_track'; track_id: string; path: 'name' | 'instrument' | 'color'; value: string }
 type AgentMode = 'local' | 'agent' | 'fallback'
 type AgentProtocol = 'responses' | 'chat-completions'
-type ApiConfig = { baseUrl: string; apiKey: string; model: string; protocol: AgentProtocol; musicBaseUrl: string; musicApiKey: string; musicModel: string; sfxBaseUrl: string; sfxApiKey: string; sfxModel: string; musicMode: 'structured' | 'audio'; rememberKey: boolean }
 type SoundPlan = { title: string; prompt: string; duration_seconds: number; texture: string; envelope: string; space: string; events: Array<{ time: number; event: string }> }
 type GeneratedAudio = { filename: string; url: string; provider: string; model?: string; source: 'audio-model' }
 type ThemeChoice = 'dark' | 'light' | 'system'
@@ -37,8 +38,7 @@ type Preferences = { theme: ThemeChoice; font: FontChoice; fontSize: 'compact' |
 
 
 const chordPitches = (root: number) => [root, root + 4, root + 7]
-const defaultApiConfig: ApiConfig = { baseUrl: 'https://api.openai.com/v1', apiKey: '', model: 'gpt-4.1-mini', protocol: 'responses', musicBaseUrl: 'https://api.replicate.com/v1', musicApiKey: '', musicModel: 'meta/musicgen', sfxBaseUrl: 'https://api.elevenlabs.io/v1', sfxApiKey: '', sfxModel: 'elevenlabs/sound-generation', musicMode: 'structured', rememberKey: false }
-const loadApiConfig = (): ApiConfig => { try { const saved = JSON.parse(localStorage.getItem('sonic-matter-agent') ?? '{}') as Partial<ApiConfig>; const rememberKey = Boolean(saved.rememberKey); return { ...defaultApiConfig, ...saved, rememberKey, apiKey: rememberKey ? (saved.apiKey ?? '') : '', musicApiKey: rememberKey ? (saved.musicApiKey ?? '') : '', sfxApiKey: rememberKey ? (saved.sfxApiKey ?? '') : '' } } catch { return defaultApiConfig } }
+const loadApiConfig = () => loadPersonalConfig(localStorage)
 const defaultPreferences: Preferences = { theme: 'dark', font: 'sans', fontSize: 'default', reducedMotion: false }
 const loadPreferences = (): Preferences => { try { return { ...defaultPreferences, ...JSON.parse(localStorage.getItem('sonic-matter-preferences') ?? '{}') } } catch { return defaultPreferences } }
 const gestureScale = [48, 50, 52, 55, 57, 60, 62, 64, 67, 69, 72, 74, 76]
@@ -95,10 +95,10 @@ export default function App() {
   const editProject = (instructionOverride?: string) => { const instruction = (instructionOverride ?? agentInstruction).trim(); if (!instruction) { setNotice('先告诉 Agent 你想如何修改工程。'); return } return editTask.run(async signal => { const data = await agentRequest<{ assistant_message: string; operations: AgentOperation[]; source?: AgentMode }>('/api/project/edit', { project: persistedProject, instruction }, signal); applyProject('Agent 修改工程', previous => data.operations.reduce(applyOperation, previous)); setAgentMode(data.source === 'agent' ? 'agent' : 'fallback'); setNotice(data.assistant_message); setAgentInstruction('') }, '工程编辑') }
   const requestSoundPlan = async (signal: AbortSignal) => { const data = await agentRequest<SoundPlan & { source?: AgentMode; warning?: string }>('/api/sfx/plan', { description: soundText, mixer }, signal); setSoundPlan(data); setSoundReady(true); setAgentMode(data.source === 'agent' ? 'agent' : 'fallback'); return data }
   const generateSound = () => soundTask.run(async signal => { const data = await requestSoundPlan(signal); setNotice(data.warning ?? '音效 Agent 已生成结构化声音计划，可以交给实际音频模型。') }, '音效计划')
-  const generateRealSound = () => soundTask.run(async signal => { if (!soundPlan) await requestSoundPlan(signal); const result = await apiFetch<GeneratedAudio>('/api/sfx/generate', { description: soundText, mixer, sfx: { baseUrl: apiConfig.sfxBaseUrl || undefined, apiKey: apiConfig.sfxApiKey || undefined, model: apiConfig.sfxModel || undefined } }, { signal, timeoutMs: LONG_TIMEOUT_MS }); setSoundAudio(result); setSoundReady(true); setAgentMode('agent'); setNotice('真实音效已生成，可以试听或加入工程。') }, '真实音效生成')
+  const generateRealSound = () => soundTask.run(async signal => { if (!soundPlan) await requestSoundPlan(signal); const result = await runPlatformGeneration<GeneratedAudio>('/api/sfx/generate', { description: soundText, mixer }, { signal, timeoutMs: LONG_TIMEOUT_MS }); setSoundAudio(result); setSoundReady(true); setAgentMode('agent'); setNotice('真实音效已生成，可以试听或加入工程。') }, '真实音效生成')
   const previewSound = () => { playSoundPreview(soundText, mixer); setNotice('正在用浏览器本地合成试听；满意后再调用真实音效 API。') }
   const addSound = async () => { if (!soundPlan && !soundAudio) return setNotice('先点“生成声音计划”或“生成真实音效”，再加入工程。'); setSoundReady(true); try { const source = soundAudio?.url ?? encodeSoundClip(soundText, mixer); const duration = source.startsWith(LOCAL_SOUND_CLIP_PREFIX) ? clipDurationFor(source) : await audioSourceDuration(source) || clipDurationFor(source, projectDuration(project)); const clips = [createClip([], source, 0, duration)]; const track: Track = { id: 'sfx', name: soundPlan?.title ?? '语义音效', kind: 'audio', instrument: 'SFX', color: '#fb7185', clips, gain: .8, pan: 0, muted: false, solo: false, start: 0 }; applyProject('加入音效轨', p => ({ ...p, tracks: p.tracks.some(t => t.id === 'sfx') ? p.tracks.map(t => t.id === 'sfx' ? { ...track, start: t.start ?? 0, gain: t.gain ?? .8, pan: t.pan ?? 0, muted: Boolean(t.muted), solo: Boolean(t.solo) } : t) : [...p.tracks, track] })); setNotice(soundAudio ? `真实音效已加入当前工程（${duration.toFixed(1)}s），可以拖动片段位置、裁剪或调整淡入淡出。` : '本地音效已加入工程：由声音计划实时合成，播放与 WAV / MP3 导出都会包含它。') } catch (error) { setNotice(error instanceof Error ? error.message : '音效加入工程失败。') } }
-  const generateMusic = () => musicTask.run(async signal => { const prompt = buildMusicPrompt({ title: project.title, key: project.key, tempo: project.tempo, concept: project.concept?.title ?? '抽象声音草图', definition: gameDefinition, notes: currentNotes }); if (apiConfig.musicMode === 'structured') { const result = await agentRequest<{ title: string; tempo: number; key: string; duration: number; tracks: Array<{ id: string; name: string; instrument: string; color: string; notes: Note[] }>; source?: AgentMode; warning?: string }>('/api/music/plan', { project: persistedProject, prompt }, signal); const generatedTracks = result.tracks.map(track => ({ ...track, kind: 'midi' as const, gain: .8, pan: 0, muted: false, solo: false, start: 0 })); applyProject('Agent 生成可编辑工程', previous => ({ ...previous, title: result.title, tempo: result.tempo, key: result.key, duration: result.duration, tracks: [...previous.tracks.filter(track => !track.id.startsWith('ai-structure-')), ...generatedTracks] })); setAgentMode(result.source === 'agent' ? 'agent' : 'fallback'); setNotice(result.warning ?? 'Agent 已生成可编辑的 MIDI / 和弦工程；现在可以继续修改并导出 MIDI。'); return } const result = await apiFetch<GeneratedAudio>('/api/music/generate', { prompt, duration_seconds: 10, music: { baseUrl: apiConfig.musicBaseUrl || undefined, apiKey: apiConfig.musicApiKey || undefined, model: apiConfig.musicModel || undefined } }, { signal, timeoutMs: LONG_TIMEOUT_MS }); const duration = await audioSourceDuration(result.url) || 10; applyProject('AI 音频加入工程', previous => ({ ...previous, tracks: [...previous.tracks.filter(track => track.id !== 'ai-music'), { id: 'ai-music', name: 'AI 生成音频', kind: 'audio', instrument: 'Audio Model', color: '#c4b5fd', clips: [createClip([], result.url, 0, duration)], gain: .8, pan: 0, muted: false, solo: false, start: 0 }] })); setAgentMode('agent'); setNotice('真实 AI 音频已加入工程；拖动片段可对齐 MIDI 骨架，也可以裁剪或分割后再导出。') }, '音乐生成')
+  const generateMusic = () => musicTask.run(async signal => { const prompt = buildMusicPrompt({ title: project.title, key: project.key, tempo: project.tempo, concept: project.concept?.title ?? '抽象声音草图', definition: gameDefinition, notes: currentNotes }); if (apiConfig.musicMode === 'structured') { const result = await agentRequest<{ title: string; tempo: number; key: string; duration: number; tracks: Array<{ id: string; name: string; instrument: string; color: string; notes: Note[] }>; source?: AgentMode; warning?: string }>('/api/music/plan', { project: persistedProject, prompt }, signal); const generatedTracks = result.tracks.map(track => ({ ...track, kind: 'midi' as const, gain: .8, pan: 0, muted: false, solo: false, start: 0 })); applyProject('Agent 生成可编辑工程', previous => ({ ...previous, title: result.title, tempo: result.tempo, key: result.key, duration: result.duration, tracks: [...previous.tracks.filter(track => !track.id.startsWith('ai-structure-')), ...generatedTracks] })); setAgentMode(result.source === 'agent' ? 'agent' : 'fallback'); setNotice(result.warning ?? 'Agent 已生成可编辑的 MIDI / 和弦工程；现在可以继续修改并导出 MIDI。'); return } const result = await runPlatformGeneration<GeneratedAudio>('/api/music/generate', { prompt, duration_seconds: 10 }, { signal, timeoutMs: LONG_TIMEOUT_MS }); const duration = await audioSourceDuration(result.url) || 10; applyProject('AI 音频加入工程', previous => ({ ...previous, tracks: [...previous.tracks.filter(track => track.id !== 'ai-music'), { id: 'ai-music', name: 'AI 生成音频', kind: 'audio', instrument: 'Audio Model', color: '#c4b5fd', clips: [createClip([], result.url, 0, duration)], gain: .8, pan: 0, muted: false, solo: false, start: 0 }] })); setAgentMode('agent'); setNotice('真实 AI 音频已加入工程；拖动片段可对齐 MIDI 骨架，也可以裁剪或分割后再导出。') }, '音乐生成')
   const exportMidi = async () => { try { downloadBlob(await apiFetchBlob('/api/export/midi', { project }), `${project.title}.mid`); setNotice('MIDI 已导出。') } catch (error) { setNotice(errorMessage(error, 'MIDI 导出失败。')) } }
   const exportWav = async () => { try { setNotice('正在离线渲染完整工程…'); const rendered = await renderProjectAudio(project); downloadBlob(audioBufferToWav(rendered), `${project.title}.wav`); setNotice('MIDI 与真实音频轨已混音并导出 WAV。') } catch (error) { setNotice(error instanceof Error ? error.message : 'WAV 导出失败。') } }
   const exportMp3 = async () => { try { setNotice('正在离线渲染完整工程…'); const rendered = await renderProjectAudio(project); downloadBlob(audioBufferToMp3(rendered), `${project.title}.mp3`); setNotice('MIDI 与真实音频轨已混音并导出 MP3。') } catch (error) { setNotice(error instanceof Error ? error.message : 'MP3 导出失败。') } }
@@ -132,7 +132,7 @@ export default function App() {
   const changeInstrument = (id: string, instrument: string) => { if (playing) stopPlayback(); applyProject('切换乐器', previous => setTrackInstrument(previous, id, instrument), `track-instrument:${id}`) }
   const updateMasterGain = (gain: number) => { if (playing) stopPlayback(); applyProject('调整主音量', previous => ({ ...previous, masterGain: gain }), 'master-gain') }
 
-  const saveApiConfig = (next: ApiConfig) => { setApiConfig(next); localStorage.setItem('sonic-matter-agent', JSON.stringify({ ...next, apiKey: next.rememberKey ? next.apiKey : '', musicApiKey: next.rememberKey ? next.musicApiKey : '', sfxApiKey: next.rememberKey ? next.sfxApiKey : '', rememberKey: next.rememberKey })); setNotice('Agent、音乐和音效服务配置已保存在当前浏览器。') }
+  const saveApiConfig = (next: ApiConfig) => { setApiConfig(next); localStorage.setItem('sonic-matter-agent', JSON.stringify(normalizePersonalConfig(next))); setNotice('个人 Agent 配置已保存在当前浏览器；平台音乐与音效密钥由管理员统一配置。') }
   const nav = <nav className="nav" aria-label="主导航">{primaryNavigation.map(item => <Nav key={item.page} active={page === item.page} label={item.label} onClick={() => go(item.page)} />)}</nav>
   return <div className="app">
     <header><div className="brand"><span>◌</span><strong>SONIC / MATTER</strong></div>{nav}<div className="header-actions"><span className={`online ${agentMode}`}>● {agentMode === 'agent' ? '真实 Agent · JSON Schema' : agentMode === 'fallback' ? 'Agent fallback' : '等待 Agent'}</span><button className={`my-button${page === myPage ? ' active' : ''}`} aria-current={page === myPage ? 'page' : undefined} onClick={() => go(myPage)}>我的</button></div></header>
@@ -210,13 +210,6 @@ function AgentSettings({ value, onSave, onNotice }: { value: ApiConfig; onSave: 
       onNotice(`连接成功：${data.message ?? 'Agent 已响应。'}`)
     } catch (error) { onNotice(errorMessage(error, '连接失败。')) } finally { setTesting(false) }
   }
-  const validateService = (name: string, baseUrl: string, apiKey: string, model: string) => {
-    if (!baseUrl.trim()) return onNotice(`${name} Base URL 不能为空。`)
-    try { new URL(baseUrl) } catch { return onNotice(`${name} Base URL 不是有效的网址。`) }
-    if (!apiKey.trim()) return onNotice(`请填写 ${name} API Key；如果只想使用本地结构化渲染，可以暂时留空。`)
-    if (!model.trim()) return onNotice(`请填写 ${name} Model。`)
-    onNotice(`${name} 配置格式检查通过；点击保存后，生成请求会使用这组配置。`)
-  }
   return <div className="settings-grid service-settings-grid">
     <div className="settings-card">
       <div className="paneltitle"><span>AGENT SERVICE</span><span>JSON SCHEMA</span></div>
@@ -225,31 +218,25 @@ function AgentSettings({ value, onSave, onNotice }: { value: ApiConfig; onSave: 
       <label className="setting-row"><span>Model</span><input value={form.model} onChange={e => update('model', e.target.value)} placeholder="模型名称" /></label>
       <label className="setting-row"><span>Protocol</span><select value={form.protocol} onChange={e => update('protocol', e.target.value as AgentProtocol)}><option value="responses">Responses API</option><option value="chat-completions">Chat Completions / JSON Schema</option></select></label>
       <label className="check-row"><input type="checkbox" checked={form.rememberKey} onChange={e => update('rememberKey', e.target.checked)} /><span>记住 API Key（仅当前浏览器 localStorage）</span></label>
-      <div className="settings-actions"><button className="secondary" onClick={test} disabled={testing}>{testing ? '测试中…' : '测试 Agent'}</button><button className="primary" onClick={() => onSave(form)}>保存全部配置</button></div>
-      <p className="security-note">Agent 负责概念解读、结构化音乐工程和轨道编辑。API Key 只会通过本机后端转发，不会写入项目文件。</p>
+      <div className="settings-actions"><button className="secondary" onClick={test} disabled={testing}>{testing ? '测试中…' : '测试 Agent'}</button><button className="primary" onClick={() => onSave(form)}>保存个人配置</button></div>
+      <p className="security-note">Agent 负责概念解读、结构化音乐工程和轨道编辑。个人 API Key 通过本站后端转发，不会写入项目文件。</p>
     </div>
     <div className="settings-card">
       <div className="paneltitle"><span>MUSIC SERVICE</span><span>OPTIONAL ENHANCEMENT</span></div>
-      <label className="setting-row"><span>Base URL</span><input value={form.musicBaseUrl} onChange={e => update('musicBaseUrl', e.target.value)} placeholder="https://api.replicate.com/v1" /></label>
-      <label className="setting-row"><span>API Key</span><input type="password" value={form.musicApiKey} onChange={e => update('musicApiKey', e.target.value)} placeholder="服务商 API Key" /></label>
-      <label className="setting-row"><span>Model</span><input value={form.musicModel} onChange={e => update('musicModel', e.target.value)} placeholder="meta/musicgen" /></label>
       <label className="setting-row"><span>生成方式</span><select value={form.musicMode} onChange={e => update('musicMode', e.target.value as ApiConfig['musicMode'])}><option value="structured">结构化工程（推荐）</option><option value="audio">直接 AI 音频增强</option></select></label>
-      <div className="settings-actions"><button className="secondary" onClick={() => validateService('音乐服务', form.musicBaseUrl, form.musicApiKey, form.musicModel)}>检查配置</button></div>
-      <p className="security-note">推荐默认使用 Agent 生成可编辑的 MIDI / 和弦工程，再用本地 WebAudio 渲染。这里的音乐 API 只作为氛围和演奏层增强，不会替代 MIDI。</p>
+      <div className="provider"><strong>Replicate · 平台音乐服务</strong><span>真实音乐生成需先到“我的 → 账户”登录。密钥与模型由服务器统一管理，无需填写个人音乐 Key。</span></div>
+      <p className="security-note">推荐使用可编辑的 MIDI / 和弦工程与本地渲染。选择 AI 音频增强后点击“保存个人配置”，即可在音乐工作室调用平台服务。</p>
     </div>
     <div className="settings-card">
       <div className="paneltitle"><span>SFX SERVICE</span><span>OPTIONAL</span></div>
-      <label className="setting-row"><span>Base URL</span><input value={form.sfxBaseUrl} onChange={e => update('sfxBaseUrl', e.target.value)} placeholder="https://api.elevenlabs.io/v1" /></label>
-      <label className="setting-row"><span>API Key</span><input type="password" value={form.sfxApiKey} onChange={e => update('sfxApiKey', e.target.value)} placeholder="服务商 API Key" /></label>
-      <label className="setting-row"><span>Model</span><input value={form.sfxModel} onChange={e => update('sfxModel', e.target.value)} placeholder="elevenlabs/sound-generation" /></label>
-      <div className="settings-actions"><button className="secondary" onClick={() => validateService('音效服务', form.sfxBaseUrl, form.sfxApiKey, form.sfxModel)}>检查配置</button></div>
-      <p className="security-note">音效服务用于将 Agent 生成的声音计划变成真实音频。没有 Key 时仍可使用结构化计划和本地试听 fallback。</p>
+      <div className="provider"><strong>ElevenLabs · 平台音效服务</strong><span>管理员配置服务器密钥后，登录账号可在音效实验室生成真实音效。</span></div>
+      <p className="security-note">本地试听和声音计划仍可直接体验；“生成真实音效”需登录并使用平台服务。</p>
     </div>
     <div className="settings-card explain">
       <div className="paneltitle"><span>PIPELINE</span><span>RECOMMENDED</span></div>
       <div className="provider"><strong>1 / Agent</strong><span>把概念、和弦、节奏和轨道写成可校验的 Project JSON。</span></div>
       <div className="provider"><strong>2 / Local Render</strong><span>使用本地音色和 WebAudio 渲染，保留 MIDI 可编辑性和导出能力。</span></div>
-      <div className="provider"><strong>3 / API Enhance</strong><span>音乐 API 和音效 API 都是可选增强层；三组服务可以一次性填写并统一保存。</span></div>
+      <div className="provider"><strong>3 / API Enhance</strong><span>音乐与音效是需登录的平台增强层；只有管理员可配置密钥，使用者无需接触平台凭据。</span></div>
     </div>
   </div>
 }
