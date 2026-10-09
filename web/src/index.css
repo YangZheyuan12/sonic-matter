@@ -254,3 +254,4 @@
   .ruler span:nth-child(n+3):not(:last-child){visibility:hidden}
   .playhead{display:block}
 }
+.admin-service-config{margin-top:28px}.admin-service-config>p{color:var(--muted);font-size:13px;line-height:1.7}.admin-service-config .setting-row{grid-template-columns:1fr;gap:10px}.admin-service-config .setting-row input{width:100%;min-width:0}.settings-card [role=alert],.admin-service-config [role=alert]{color:#d76382}.service-settings-grid{margin-top:18px}.admin-service-config .check-row{display:flex;align-items:center;gap:10px;font-size:12px;line-height:1.6}

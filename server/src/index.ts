@@ -16,6 +16,8 @@ import { projectsRouter } from './projects.ts'
 import { ProjectStore } from './projectStore.ts'
 import { AuthStore } from './authStore.ts'
 import { createAuth } from './auth.ts'
+import { ServiceConfigStore } from './serviceConfigStore.ts'
+import { adminConfigRouter } from './adminConfig.ts'
 import {
   agentTimeoutMs,
   allowedOrigins,
@@ -45,12 +47,14 @@ const projectsDir = path.resolve(process.cwd(), process.env.PROJECTS_DIR ?? 'pro
 const replicateModel = process.env.MUSIC_REPLICATE_MODEL ?? 'meta/musicgen'
 const authStore = new AuthStore(path.resolve(process.cwd(), process.env.AUTH_DIR ?? 'auth'))
 const auth = createAuth(authStore, { origin: process.env.AUTH_ORIGIN })
+const serviceConfig = new ServiceConfigStore(authStore.dir)
 
 app.use(requestContext())
 // 配了 CORS_ORIGIN 就只放行名单里的来源，其它来源由 errorHandler 转成 403。
 app.use(cors(allowedOrigins.length ? { origin: corsOrigin } : undefined))
 app.use(express.json({ limit: jsonBodyLimit }))
 app.use('/api/auth', auth.router)
+app.use('/api/admin/service-config', adminConfigRouter(serviceConfig, auth))
 app.use('/generated', express.static(generatedDir))
 const agentConfigSchema = z.object({
   baseUrl: z.string().trim().url().optional(),
@@ -366,6 +370,7 @@ function startServer() {
     force.unref?.()
     server.close(() => {
       authStore.close()
+      serviceConfig.close()
       logger.info('服务已关闭')
       process.exit(0)
     })

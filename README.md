@@ -94,7 +94,7 @@ npm run build       # web 生产构建
 
 ## 部署（8088 + Nginx）
 
-线上 Node 服务监听 `8088`，设 `SERVE_WEB=1` 后同时托管前端与 API；服务器已有的 Nginx 从 80 端口反向代理到 `127.0.0.1:8088`。因此既可直接访问 `http://8.141.109.141/`，也可用 `http://8.141.109.141:8088/` 排查上游服务。
+线上 Node 服务仅在本机监听 `8088`，设 `SERVE_WEB=1` 后同时托管前端与 API；Nginx 的 HTTPS 入口为 `https://8.141.109.141/`，HTTP 入口跳转到 HTTPS。排查上游服务在服务器内部访问 `http://127.0.0.1:8088/`。
 
 ```bash
 cd server
@@ -116,4 +116,4 @@ SERVE_WEB=1 PORT=8088 node src/index.ts   # Node 24 原生运行 TS 入口，生
 
 ## 当前状态
 
-这是可交互的功能 Demo：首页旋律录制、游戏资料与 Sound Direction、音乐工作室、音效双实验室、多轨编辑、钢琴卷帘、音频片段编辑、真实波形、撤销/重做、本地与 SQLite 云端工程、MIDI / WAV / MP3 导出均已落地，并由单元测试与 CI 兜底。生产环境使用 HTTPS + Nginx + 本机 8088（见 [`deploy/README.md`](deploy/README.md)）。固定 `admin` / `user` 双账号的后端登录、退出、持久化会话和登录限流已实现，前端登录入口与 AI 接口权限接入仍在后续步骤中。云端工程读取公开，写入继续使用浏览器本地身份串校验。多供应商真实音乐与音效 API 仍是可选增强层。
+这是可交互的功能 Demo：首页旋律录制、游戏资料与 Sound Direction、音乐工作室、音效双实验室、多轨编辑、钢琴卷帘、音频片段编辑、真实波形、撤销/重做、本地与 SQLite 云端工程、MIDI / WAV / MP3 导出均已落地，并由单元测试与 CI 兜底。生产环境使用 HTTPS + Nginx + 本机 8088（见 [`deploy/README.md`](deploy/README.md)）。固定 `admin` / `user` 双账号支持“我的 → 账户”真实登录、退出、持久化会话和登录限流。管理员可在账户页配置 Replicate / ElevenLabs 平台密钥，服务端 AES-256-GCM 加密保存，仅回传配置状态。平台密钥尚未接入生成，下一步接入 AI 权限守卫后启用；个人 Agent 配置保留。云端工程读取公开，写入继续使用浏览器本地身份串校验。

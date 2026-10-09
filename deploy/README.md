@@ -18,8 +18,8 @@ http://8.141.109.141/          -> 308 跳转 HTTPS
 - 不要提交或覆盖服务器的 `server/.env`，其中可能包含密钥和部署路径。
 - 更新前备份 `server/projects/projects.db` 与 `server/auth`；它们分别保存云端工程、账号库和初始凭据。
 - `server/generated`、`server/projects` 与 `server/auth` 都是运行时数据，更新源码时不能删除。
-- 已提供固定双账号登录接口、持久化会话及登录限流；前端登录入口、管理员密钥配置和 AI 接口权限接入将在后续步骤完成。
-- 现有创作 API 暂未应用登录守卫。分享链接可公开读取；工程写入权限仍依赖浏览器本地 owner 串。完成 AI 接口权限接入前，不应配置公共付费供应商密钥。
+- 已提供固定双账号登录接口、持久化会话及登录限流，前端“我的 → 账户”支持真实登录与管理员平台密钥配置；AI 接口权限接入将在下一步完成。
+- 现有创作 API 暂未应用登录守卫。分享链接可公开读取；工程写入权限仍依赖浏览器本地 owner 串。管理员加密配置尚未接入生成，可提前保存；完成权限接入前，不应在旧环境变量 `REPLICATE_API_TOKEN` / `ELEVENLABS_API_KEY` 中配置公共付费密钥。
 
 ## 首次部署
 
@@ -116,13 +116,21 @@ chmod 600 auth/auth.db auth/initial-credentials.txt
 
 会话绝对有效期 7 天，登录时轮换当前会话；同一账号允许最多 20 个浏览器会话并存，超出时淘汰最早会话。会话令牌仅以 SHA-256 哈希存入 `auth.db`，退出即时撤销，重启不丢失会话；禁用账号立即使其会话无效。登录尝试每 IP 每 15 分钟最多 10 次、每账号最多 30 次，超限返回 `429 / login_rate_limited` 和 `Retry-After`，计数同样在 SQLite 持久化。
 
-`createAuth` 导出的 `requireAccount`、`requireRole` 和 `protectMutation` 供后续创作接口与管理员配置接口使用。当前步骤尚未增加前端登录表单，也尚未用这些守卫限制 AI 生成接口。
+`createAuth` 导出的 `requireAccount`、`requireRole` 和 `protectMutation` 已用于管理员配置接口，AI 生成接口守卫留待下一步。“我的 → 账户”使用真实服务器会话，旧 localStorage Demo 登录标记会移除。
+
+## 管理员平台密钥（第四步）
+
+管理员登录后在账户页配置 Replicate / ElevenLabs。普通用户看不到配置表单，直接请求接口也会返回 403；访客返回 401。输入框始终为空白，留空保留原密钥，勾选清除并保存才删除。保存只更新服务器配置，尚不启用平台生成服务。
+
+`SONIC_CONFIG_KEY` 是服务器 `.env` 中的 32 字节保护密钥（64 位 hex 或标准 base64），仅首次配置时生成，不能随部署重新生成。服务使用 AES-256-GCM 保存到 `server/auth/service-config.db`，数据库文件权限 600。首次设置可用 `node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"` 在服务器本地生成并手动写入 `.env`，不要将输出发送到聊天或提交 Git。重启服务后配置生效；缺少参数时页面提示保护未就绪，保存返回 503。已有配置无法解密时保存拒绝覆盖，需恢复正确保护密钥或备份。
+
+备份 `service-config.db` 必须一并保留包含 `SONIC_CONFIG_KEY` 的 `.env`，二者均仅 root 可读；使用 SQLite 在线备份避免遗漏 WAL。代码回滚无需删除此配置库或重置账号。
 
 ## 日常更新
 
 Git 工作副本可从 GitHub 的 `main` 更新。当前生产目录是源码快照，没有 `.git`，应上传指定提交的源码包并更新 `DEPLOYED_COMMIT`，不能直接在该目录执行 `git pull`。无论哪种方式，构建前均不要删除运行时数据。
 
-SQLite 启用 WAL，更新前应使用 SQLite 在线备份（Node `node:sqlite` 的 `backup` API）或停服务后复制整个数据库目录；不能仅复制活跃数据库的 `.db` 文件。备份应保存在 root 专用目录，包含工程库、认证库、初始凭据和 `.env`。下面 Git 更新示例省略备份命令，执行前须先完成备份：
+SQLite 启用 WAL，更新前应使用 SQLite 在线备份（Node `node:sqlite` 的 `backup` API）或停服务后复制整个数据库目录；不能仅复制活跃数据库的 `.db` 文件。备份应保存在 root 专用目录，包含工程库、认证库、服务配置库、初始凭据和 `.env`（含保护密钥）。下面 Git 更新示例省略备份命令，执行前须先完成备份：
 
 ```bash
 cd /opt/sonic-matter

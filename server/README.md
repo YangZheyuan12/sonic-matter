@@ -150,6 +150,10 @@ npm run dev
 - ElevenLabs Sound Generation 负责真实音效生成。调音台参数会被翻译进文本提示中。
 - 用户点击的音符仍保存在工程的 MIDI 事件骨架里，因此可以继续编辑、导出 MIDI，并与 AI 音频同时保留。不要把 AI 音频默认反向识别为 MIDI，否则复调、鼓组和起止时间都会产生不可避免的误差。
 
-生成文件保存在 `server/generated`，云端工程存入独立的 `server/projects` SQLite 库，固定双账号及会话存入非公开的 `server/auth` SQLite 库。后端已提供 `/api/auth/login`、`/api/auth/me`、`/api/auth/logout`，前端登录入口和 AI 接口权限接入将在后续步骤完成。生产配置、Cookie 安全设置和登录限流见 [`deploy/README.md`](../deploy/README.md)。
+生成文件保存在 `server/generated`，云端工程存入独立的 `server/projects` SQLite 库，固定双账号及会话存入非公开的 `server/auth` SQLite 库。“我的 → 账户”已接入 `/api/auth/login`、`/api/auth/me`、`/api/auth/logout`。管理员通过 `GET /api/admin/service-config` 查询状态，`PUT /api/admin/service-config` 保存 `{ replicate?: string | null, elevenlabs?: string | null }`。省略字段保留配置，`null` 清除配置，空字符串不合法。接口仅允许管理员；写操作需同源 JSON 和 `X-Sonic-Auth: 1`，生产需 HTTPS。
+
+密钥以 AES-256-GCM 加密存入 `AUTH_DIR/service-config.db`，随机 IV 和供应商绑定的 AAD 防止密文篡改与串用。接口不会回显明文、密文或末尾字符；前端不会保存平台密钥到 localStorage。`SONIC_CONFIG_KEY` 必须是 32 随机字节的 hex 或标准 base64，缺失时拒绝保存，错误参数无法覆盖已有配置。更新不会生成新的保护密钥。备份必须同时保留数据库和 `.env` 中的保护密钥。
+
+平台配置目前只完成保存，未接入生成服务；AI 接口权限与平台密钥调用留待下一步，保存不会调用供应商或扣费。现有个人 Agent / 音频服务设置保留。生产配置、Cookie 安全设置和登录限流见 [`deploy/README.md`](../deploy/README.md)。
 
 没有配置 API Key 时，概念、音效计划和音乐工程计划接口会返回本地 fallback，方便继续演示；工程编辑会明确提示需要真实 Agent。

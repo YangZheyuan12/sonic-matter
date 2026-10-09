@@ -48,13 +48,13 @@ export function createAuth(store: AuthStore, options: AuthOptions = {}) {
 
   /** 自定义请求头阻断普通表单 CSRF；校验 Origin 阻断跨站 fetch 和登录 CSRF。 */
   const protectMutation: RequestHandler = (req, _res, next) => {
-    if (secureCookie && !req.secure) throw forbidden('登录和退出必须通过 HTTPS 访问。')
+    if (secureCookie && !req.secure) throw forbidden('此操作必须通过 HTTPS 访问。')
     const expectedOrigin = origin ?? `${req.protocol}://${req.get('host')}`
     if (req.get('x-sonic-auth') !== '1' || req.get('sec-fetch-site') === 'cross-site'
       || (req.get('origin') && req.get('origin') !== expectedOrigin)) {
-      throw forbidden('登录请求来源无效，请在本站页面重试。')
+      throw forbidden('请求来源无效，请在本站页面重试。')
     }
-    if (!req.is('application/json')) throw badRequest('请使用 JSON 格式提交登录请求。')
+    if (!req.is('application/json')) throw badRequest('请使用 JSON 格式提交请求。')
     next()
   }
 
