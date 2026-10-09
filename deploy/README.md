@@ -18,8 +18,8 @@ http://8.141.109.141/          -> 308 跳转 HTTPS
 - 不要提交或覆盖服务器的 `server/.env`，其中可能包含密钥和部署路径。
 - 更新前备份 `server/projects/projects.db` 与 `server/auth`；它们分别保存云端工程、账号库和初始凭据。
 - `server/generated`、`server/projects` 与 `server/auth` 都是运行时数据，更新源码时不能删除。
-- 当前没有正式账号认证。分享链接可公开读取；写入权限依赖浏览器本地 owner 串。
-- 公网服务没有通用限流，不应把服务器 API Key 暴露给不受信任的访客。
+- 已提供固定双账号登录接口、持久化会话及登录限流；前端登录入口、管理员密钥配置和 AI 接口权限接入将在后续步骤完成。
+- 现有创作 API 暂未应用登录守卫。分享链接可公开读取；工程写入权限仍依赖浏览器本地 owner 串。完成 AI 接口权限接入前，不应配置公共付费供应商密钥。
 
 ## 首次部署
 
@@ -53,6 +53,9 @@ SERVE_WEB=1
 WEB_DIST_DIR=/opt/sonic-matter/web/dist
 DATA_DIR=/opt/sonic-matter/server/generated
 PROJECTS_DIR=/opt/sonic-matter/server/projects
+AUTH_DIR=/opt/sonic-matter/server/auth
+AUTH_ORIGIN=https://8.141.109.141
+NODE_ENV=production
 ```
 
 安装仓库中的 systemd 单元：
@@ -97,16 +100,32 @@ chmod 700 auth
 chmod 600 auth/auth.db auth/initial-credentials.txt
 ```
 
-命令会为两个账号生成随机初始密码并写入 `auth/initial-credentials.txt`，不会在终端打印密码；重复执行不会重置已有账号。该文件只允许 root 读取，不要复制进 GitHub 或发送到聊天中。当前步骤只建立账号数据库，登录接口和管理员配置页面在后续更新中接入。
+命令会为两个账号生成随机初始密码并写入 `auth/initial-credentials.txt`，不会在终端打印密码；重复执行不会重置已有账号。该文件只允许 root 读取，不要复制进 GitHub 或发送到聊天中。
+
+### 6. 登录接口与会话（第三步）
+
+| 接口 | 行为 |
+| --- | --- |
+| `POST /api/auth/login` | JSON `{ username, password }`，成功返回 `{ account: { id, username, role }, expiresAt }` 并设置会话 Cookie |
+| `GET /api/auth/me` | 返回当前账号和过期时间；访客或过期会话返回 `{ account: null, expiresAt: null }` |
+| `POST /api/auth/logout` | 撤销当前会话并清除 Cookie，返回 `{ ok: true }`，重复退出仍成功 |
+
+登录与退出必须携带 `Content-Type: application/json` 和 `X-Sonic-Auth: 1`。浏览器请求必须来自 `AUTH_ORIGIN`（未配置时按当前 Host 和协议校验），拒绝跨站请求。前端后续通过已有 `apiJson` 同源请求这三个接口，Cookie 自动随请求发送，无需把密码或令牌保存到 localStorage。
+
+生产环境自动使用 `__Host-sonic-session` Cookie，开启 `Secure`、`HttpOnly`、`SameSite=Strict` 和 `Path=/`，只允许 HTTPS 登录/退出。本地非生产环境使用 `sonic-session`，可通过 Vite 同源代理开发。服务仅信任 loopback 反向代理，Nginx 必须设置 `X-Forwarded-Proto` 和 `X-Forwarded-For`，并保持公网 8088 关闭。
+
+会话绝对有效期 7 天，登录时轮换当前会话；同一账号允许最多 20 个浏览器会话并存，超出时淘汰最早会话。会话令牌仅以 SHA-256 哈希存入 `auth.db`，退出即时撤销，重启不丢失会话；禁用账号立即使其会话无效。登录尝试每 IP 每 15 分钟最多 10 次、每账号最多 30 次，超限返回 `429 / login_rate_limited` 和 `Retry-After`，计数同样在 SQLite 持久化。
+
+`createAuth` 导出的 `requireAccount`、`requireRole` 和 `protectMutation` 供后续创作接口与管理员配置接口使用。当前步骤尚未增加前端登录表单，也尚未用这些守卫限制 AI 生成接口。
 
 ## 日常更新
 
-推荐让服务器从 GitHub 的 `main` 更新，构建前不要删除运行时数据：
+Git 工作副本可从 GitHub 的 `main` 更新。当前生产目录是源码快照，没有 `.git`，应上传指定提交的源码包并更新 `DEPLOYED_COMMIT`，不能直接在该目录执行 `git pull`。无论哪种方式，构建前均不要删除运行时数据。
+
+SQLite 启用 WAL，更新前应使用 SQLite 在线备份（Node `node:sqlite` 的 `backup` API）或停服务后复制整个数据库目录；不能仅复制活跃数据库的 `.db` 文件。备份应保存在 root 专用目录，包含工程库、认证库、初始凭据和 `.env`。下面 Git 更新示例省略备份命令，执行前须先完成备份：
 
 ```bash
 cd /opt/sonic-matter
-cp server/projects/projects.db /tmp/sonic-matter-projects.db.bak
-cp -a server/auth /tmp/sonic-matter-auth.bak
 git fetch origin
 git pull --ff-only origin main
 
@@ -155,7 +174,7 @@ cd web && /opt/sonic-matter/node/bin/npm run build
 systemctl restart sonic-matter
 ```
 
-如更新后发现 SQLite 工程异常，先停止服务，再用更新前的 `/tmp/sonic-matter-projects.db.bak` 恢复；恢复会覆盖更新后的云端工程，必须先确认数据范围。
+如更新后发现 SQLite 工程异常，先停止服务，再用更新前的数据库备份恢复；恢复会覆盖更新后的云端工程，必须先确认数据范围。第三步只新增会话和限流表，代码回滚无需恢复账号数据库，也不会重置已有密码。
 
 ## 排错
 

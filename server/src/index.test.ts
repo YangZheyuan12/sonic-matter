@@ -42,6 +42,13 @@ test('没有 API Key 也能通过健康检查，并沿用客户端给的 X-Reque
   assert.equal(body.agent, false)
 })
 
+test('认证路由已接入应用，访客可查询未登录状态且响应不缓存', async () => {
+  const response = await fetch(`${base}/api/auth/me`)
+  assert.equal(response.status, 200)
+  assert.equal(response.headers.get('cache-control'), 'no-store')
+  assert.deepEqual(await response.json(), { account: null, expiresAt: null })
+})
+
 test('概念解析在没有 Key 时返回本地 fallback 的三个视角', async () => {
   const response = await post('/api/concept/interpret', JSON.stringify({ concept: '潮汐档案', context: '核心玩法：在退潮后的城市收集记忆', agent: { apiKey: '' } }))
   assert.equal(response.status, 200)

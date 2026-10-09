@@ -1,7 +1,7 @@
 /**
  * 固定双账号的持久化模型。
  *
- * 这一步只负责账号表和一次性初始化；登录会话、管理员服务配置与用量记录
+ * 负责固定账号、密码校验、持久化登录会话和登录限流；管理员配置与用量记录
  * 在后续步骤中接入。密码只以 scrypt 哈希落库，明文只由初始化命令写入一次性
  * 凭据文件，且该文件默认权限为 0600。
  */
@@ -31,6 +31,13 @@ export type AccountInitialization = {
   accounts: AccountSummary[]
   created: FixedUsername[]
 }
+
+export type SessionAccount = Pick<AccountSummary, 'id' | 'username' | 'role'>
+export type AuthSession = { account: SessionAccount; expiresAt: number }
+export const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000
+export const LOGIN_WINDOW_MS = 15 * 60 * 1000
+const hashToken = (token: string) => crypto.createHash('sha256').update(token).digest('hex')
+const validToken = (token: string) => /^[A-Za-z0-9_-]{43}$/.test(token)
 
 type AccountRow = {
   id: string
@@ -65,6 +72,7 @@ export class AuthStore {
     if (this.#db) return this.#db
     mkdirSync(this.dir, { recursive: true, mode: 0o700 })
     const db = new DatabaseSync(this.databasePath)
+    if (process.platform !== 'win32') chmodSync(this.databasePath, 0o600)
     db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 3000;')
     db.exec(`
       CREATE TABLE IF NOT EXISTS users (
@@ -77,6 +85,19 @@ export class AuthStore {
         created_at TEXT NOT NULL
       );
       CREATE UNIQUE INDEX IF NOT EXISTS idx_users_role ON users (role);
+      CREATE TABLE IF NOT EXISTS sessions (
+        token_hash TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        created_at INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id, created_at);
+      CREATE INDEX IF NOT EXISTS idx_sessions_expiry ON sessions(expires_at);
+      CREATE TABLE IF NOT EXISTS login_attempts (
+        bucket TEXT PRIMARY KEY,
+        attempts INTEGER NOT NULL,
+        resets_at INTEGER NOT NULL
+      );
     `)
     this.#db = db
     return db
@@ -132,14 +153,81 @@ export class AuthStore {
     }))
   }
 
-  /** 第三步登录实现会复用这个校验；这里先用单测锁住哈希行为。 */
-  verifyPassword(username: FixedUsername, password: string): boolean {
+  /** 未知账号也执行一次哈希，避免通过校验耗时枚举账号。 */
+  verifyPassword(username: string, password: string): boolean {
+    if (!password || password.length > 256) return false
     const row = this.#open().prepare('SELECT password_salt, password_hash, enabled FROM users WHERE username = ?').get(username) as Pick<AccountRow, 'password_salt' | 'password_hash' | 'enabled'> | undefined
+    const actual = hashPassword(password, row ? Buffer.from(row.password_salt, 'base64url') : Buffer.alloc(16))
     if (!row || row.enabled !== 1) return false
-    const actual = hashPassword(password, Buffer.from(row.password_salt, 'base64url'))
     const expected = Buffer.from(row.password_hash, 'hex')
     const actualBytes = Buffer.from(actual, 'hex')
     return actualBytes.length === expected.length && crypto.timingSafeEqual(actualBytes, expected)
+  }
+
+  /** 每 IP 每 15 分钟 10 次、每固定账号 30 次；数据库重启后仍保留计数。 */
+  consumeLoginAttempt(ip: string, username: string, now = Date.now()): number {
+    const db = this.#open()
+    const buckets = [{ key: `ip:${hashToken(ip)}`, limit: 10 }]
+    if (FIXED_ACCOUNTS.some(account => account.username === username)) {
+      buckets.push({ key: `account:${username}`, limit: 30 })
+    }
+    db.exec('BEGIN IMMEDIATE')
+    try {
+      db.prepare('DELETE FROM login_attempts WHERE resets_at <= ?').run(now)
+      let retryAt = 0
+      for (const bucket of buckets) {
+        const row = db.prepare('SELECT attempts, resets_at FROM login_attempts WHERE bucket = ?').get(bucket.key) as { attempts: number; resets_at: number } | undefined
+        if (row && row.attempts >= bucket.limit) retryAt = Math.max(retryAt, row.resets_at)
+      }
+      if (!retryAt) {
+        for (const bucket of buckets) {
+          db.prepare(`INSERT INTO login_attempts(bucket, attempts, resets_at) VALUES (?, 1, ?)
+            ON CONFLICT(bucket) DO UPDATE SET attempts = attempts + 1`).run(bucket.key, now + LOGIN_WINDOW_MS)
+        }
+      }
+      db.exec('COMMIT')
+      return retryAt ? Math.max(1, Math.ceil((retryAt - now) / 1000)) : 0
+    } catch (error) {
+      db.exec('ROLLBACK')
+      throw error
+    }
+  }
+
+  /** Cookie 中仅携带随机令牌；数据库仅保存令牌哈希。重新登录撤销当前 Cookie。 */
+  createSession(username: FixedUsername, previousToken?: string, now = Date.now()): AuthSession & { token: string } {
+    const db = this.#open()
+    const account = db.prepare('SELECT id, username, role FROM users WHERE username = ? AND enabled = 1').get(username) as SessionAccount | undefined
+    if (!account) throw new Error('账号不可用。')
+    const token = crypto.randomBytes(32).toString('base64url')
+    const expiresAt = now + SESSION_TTL_MS
+    db.exec('BEGIN IMMEDIATE')
+    try {
+      db.prepare('DELETE FROM sessions WHERE expires_at <= ?').run(now)
+      if (previousToken) this.revokeSession(previousToken)
+      // 共享使用者账号允许多浏览器登录，保留最近的 20 个会话。
+      db.prepare(`DELETE FROM sessions WHERE user_id = ? AND token_hash NOT IN
+        (SELECT token_hash FROM sessions WHERE user_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 19)`).run(account.id, account.id)
+      db.prepare('INSERT INTO sessions(token_hash, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)')
+        .run(hashToken(token), account.id, now, expiresAt)
+      db.exec('COMMIT')
+    } catch (error) {
+      db.exec('ROLLBACK')
+      throw error
+    }
+    return { token, account, expiresAt }
+  }
+
+  getSession(token: string, now = Date.now()): AuthSession | null {
+    if (!validToken(token)) return null
+    const row = this.#open().prepare(`SELECT users.id, users.username, users.role, sessions.expires_at
+      FROM sessions JOIN users ON users.id = sessions.user_id
+      WHERE token_hash = ? AND expires_at > ? AND enabled = 1`).get(hashToken(token), now) as (SessionAccount & { expires_at: number }) | undefined
+    if (!row) return null
+    return { account: { id: row.id, username: row.username, role: row.role }, expiresAt: row.expires_at }
+  }
+
+  revokeSession(token: string) {
+    if (validToken(token)) this.#open().prepare('DELETE FROM sessions WHERE token_hash = ?').run(hashToken(token))
   }
 
   close() {

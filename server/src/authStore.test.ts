@@ -5,9 +5,43 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import { AuthStore, createRandomPassword, isStrongPassword, lockCredentialsFile } from './authStore.ts'
+import { DatabaseSync } from 'node:sqlite'
+import { AuthStore, createRandomPassword, isStrongPassword, lockCredentialsFile, LOGIN_WINDOW_MS, SESSION_TTL_MS } from './authStore.ts'
 
 const tempAuthDir = () => mkdtempSync(path.join(tmpdir(), 'sonic-auth-'))
+
+test('会话及登录限流重启后仍有效，数据库仅存令牌哈希，禁用账号即时失效', t => {
+  const dir = tempAuthDir()
+  let store = new AuthStore(dir)
+  t.after(() => { store.close(); rmSync(dir, { recursive: true, force: true }) })
+  store.initializeFixedAccounts({ admin: createRandomPassword(), user: createRandomPassword() })
+  const session = store.createSession('user', undefined, 1000)
+  for (let i = 0; i < 10; i++) assert.equal(store.consumeLoginAttempt('127.0.0.1', 'user', 1000), 0)
+  store.close()
+  assert.equal(readFileSync(path.join(dir, 'auth.db')).includes(Buffer.from(session.token)), false)
+  store = new AuthStore(dir)
+  assert.equal(store.getSession(session.token, 1001)?.account.role, 'user')
+  assert.equal(store.getSession(session.token, 1000 + SESSION_TTL_MS), null)
+  assert.equal(store.consumeLoginAttempt('127.0.0.1', 'admin', 1001), 900)
+  assert.equal(store.consumeLoginAttempt('127.0.0.1', 'user', 1000 + LOGIN_WINDOW_MS), 0)
+  const db = new DatabaseSync(path.join(dir, 'auth.db'))
+  db.exec("UPDATE users SET enabled = 0 WHERE username = 'user'")
+  db.close()
+  assert.equal(store.getSession(session.token, 1002), null)
+})
+
+test('跨 IP 尝试仍受账号限流约束，会话数量有上限', t => {
+  const dir = tempAuthDir()
+  const store = new AuthStore(dir)
+  t.after(() => { store.close(); rmSync(dir, { recursive: true, force: true }) })
+  store.initializeFixedAccounts({ admin: createRandomPassword(), user: createRandomPassword() })
+  for (let i = 0; i < 30; i++) assert.equal(store.consumeLoginAttempt(`ip-${i}`, 'user', 1000), 0)
+  assert.equal(store.consumeLoginAttempt('new-ip', 'user', 1001), 900)
+  assert.equal(store.consumeLoginAttempt('new-ip', 'admin', 1001), 0)
+  const sessions = Array.from({ length: 21 }, (_, i) => store.createSession('user', undefined, 1000 + i))
+  assert.equal(store.getSession(sessions[0].token, 1021), null)
+  assert.equal(store.getSession(sessions[20].token, 1021)?.account.username, 'user')
+})
 
 test('固定账号初始化只创建 admin 和 user，并且重复运行不重置密码', () => {
   const dir = tempAuthDir()

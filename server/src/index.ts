@@ -14,6 +14,8 @@ import { noteSchema, projectSchema, trackSchema } from './projectSchema.ts'
 import { buildMusicPlanPrompt, buildProjectEditPrompt } from './musicPrompt.ts'
 import { projectsRouter } from './projects.ts'
 import { ProjectStore } from './projectStore.ts'
+import { AuthStore } from './authStore.ts'
+import { createAuth } from './auth.ts'
 import {
   agentTimeoutMs,
   allowedOrigins,
@@ -27,6 +29,8 @@ import {
 } from './http.ts'
 
 const app = express()
+// 仅信任服务器本机的 Nginx，公网 8088 必须由防火墙封闭。
+app.set('trust proxy', 'loopback')
 const port = Number(process.env.PORT ?? 8787)
 const envModel = process.env.OPENAI_MODEL ?? 'gpt-4.1-mini'
 const envBaseUrl = process.env.OPENAI_BASE_URL ?? 'https://api.openai.com/v1'
@@ -39,11 +43,14 @@ const serveWeb = process.env.SERVE_WEB === '1'
 /** 云端工程库（SQLite 文件）的目录。**必须放在 /generated 之外**——那个目录是公开静态托管的。 */
 const projectsDir = path.resolve(process.cwd(), process.env.PROJECTS_DIR ?? 'projects')
 const replicateModel = process.env.MUSIC_REPLICATE_MODEL ?? 'meta/musicgen'
+const authStore = new AuthStore(path.resolve(process.cwd(), process.env.AUTH_DIR ?? 'auth'))
+const auth = createAuth(authStore, { origin: process.env.AUTH_ORIGIN })
 
 app.use(requestContext())
 // 配了 CORS_ORIGIN 就只放行名单里的来源，其它来源由 errorHandler 转成 403。
 app.use(cors(allowedOrigins.length ? { origin: corsOrigin } : undefined))
 app.use(express.json({ limit: jsonBodyLimit }))
+app.use('/api/auth', auth.router)
 app.use('/generated', express.static(generatedDir))
 const agentConfigSchema = z.object({
   baseUrl: z.string().trim().url().optional(),
@@ -358,6 +365,7 @@ function startServer() {
     const force = setTimeout(() => process.exit(0), 5_000)
     force.unref?.()
     server.close(() => {
+      authStore.close()
       logger.info('服务已关闭')
       process.exit(0)
     })

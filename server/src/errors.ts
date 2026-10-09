@@ -13,6 +13,8 @@ import { z } from 'zod'
 
 export type ErrorCode =
   | 'bad_request'
+  | 'unauthorized'
+  | 'login_rate_limited'
   | 'not_found'
   | 'forbidden'
   | 'quota_exceeded'

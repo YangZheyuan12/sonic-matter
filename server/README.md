@@ -150,6 +150,6 @@ npm run dev
 - ElevenLabs Sound Generation 负责真实音效生成。调音台参数会被翻译进文本提示中。
 - 用户点击的音符仍保存在工程的 MIDI 事件骨架里，因此可以继续编辑、导出 MIDI，并与 AI 音频同时保留。不要把 AI 音频默认反向识别为 MIDI，否则复调、鼓组和起止时间都会产生不可避免的误差。
 
-生成文件只保存在本地 `server/generated`，适合演示 Demo。当前不需要云服务器、数据库或真实账号；正式部署时再把生成文件迁移到 S3、Cloudflare R2、腾讯云 COS 或阿里云 OSS，并按需增加数据库和认证服务。
+生成文件保存在 `server/generated`，云端工程存入独立的 `server/projects` SQLite 库，固定双账号及会话存入非公开的 `server/auth` SQLite 库。后端已提供 `/api/auth/login`、`/api/auth/me`、`/api/auth/logout`，前端登录入口和 AI 接口权限接入将在后续步骤完成。生产配置、Cookie 安全设置和登录限流见 [`deploy/README.md`](../deploy/README.md)。
 
 没有配置 API Key 时，概念、音效计划和音乐工程计划接口会返回本地 fallback，方便继续演示；工程编辑会明确提示需要真实 Agent。
