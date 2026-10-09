@@ -61,6 +61,19 @@ test('空白保留已有配置，清除优先于输入，单项更新不触碰�
   assert.deepEqual(buildConfigPatch({ replicate: 'new-key', elevenlabs: ' other-key ' }, { replicate: true, elevenlabs: false }), { replicate: null, elevenlabs: 'other-key' })
 })
 
+test('生成额度、频率和并发限制的中文原因原样传给界面，禁止自动重试', async t => {
+  let code = 'quota_exceeded'
+  stub(t, () => json({ error: '生成额度已用完，请在北京时间明日零点后再试。', code, retryable: false }, 429))
+  for (code of ['quota_exceeded', 'generation_rate_limited', 'generation_busy']) {
+    await assert.rejects(runPlatformGeneration('/api/music/generate', { prompt: '潮汐' }), (error: unknown) => {
+      assert.ok(error instanceof ApiError)
+      assert.equal(error.status, 429); assert.equal(error.code, code); assert.equal(error.retryable, false)
+      assert.match(error.message, /北京时间明日零点/)
+      return true
+    })
+  }
+})
+
 test('401、403 和 503 保留统一错误信息，供界面退出与配置错误提示使用', async t => {
   let status = 401
   stub(t, () => json({ error: '请检查服务器配置。', code: 'provider_not_configured', requestId: 'config-test' }, status))

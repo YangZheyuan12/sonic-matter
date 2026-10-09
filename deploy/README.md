@@ -128,6 +128,16 @@ chmod 600 auth/auth.db auth/initial-credentials.txt
 
 第五步将管理员保存的平台密钥接入真实音乐和音效生成。Replicate 固定使用服务器允许的 `MUSIC_REPLICATE_MODEL` 与官方 API；ElevenLabs 固定使用官方 Sound Generation API。旧版 `REPLICATE_API_TOKEN` / `ELEVENLABS_API_KEY` 环境变量不再作为生成凭据，避免绕过管理员的配置状态与即时清除操作。
 
+### 最后一步：消耗保护与验收
+
+付费生成接口先在 `AUTH_DIR/generation-usage.db` 原子预占，再联系供应商。默认值适合小范围共享：音乐每天 20 次、音效每天 50 次，全站每分钟合计 3 次，同时最多 2 个任务；额度按北京时间零点重置，管理员和使用者共享。可在 `.env` 调整 `MUSIC_DAILY_LIMIT`（0–10000，0 表示关闭音乐生成）、`SFX_DAILY_LIMIT`（0–10000，0 表示关闭音效生成）、`GENERATION_RATE_PER_MINUTE`（1–1000）和 `GENERATION_MAX_CONCURRENT`（1–20）；非法值会阻止服务启动，避免意外移除限制。
+
+请求一旦预占，即使上游失败或用户取消也计入额度，因为上游可能已经受理并收费；到额度上限后接口返回 `429 / quota_exceeded` 和北京时间次日重置前的 `Retry-After`。短时间频率限制返回 `generation_rate_limited`，并发已满返回 `generation_busy`。付费请求不自动重试，避免网络不确定时重复创建任务；Agent 相关请求不受影响。完成、失败、取消和崩溃遗留任务都会记录服务、时间、结果及错误码，不记录提示词或平台密钥；90 天后清理，不提供公开用量接口。服务器 root 先进入 `/opt/sonic-matter/server`，再用 `/opt/sonic-matter/node/bin/node src/usage-status.ts` 查看当天汇总。
+
+计数和并发槽位跨进程重启保留。崩溃遗留槽位在该任务截止时间加 30 秒后自动回收（默认最多约 5 分 30 秒），回收不退还每日额度；平台任务结束并不代表供应商保证未收费或已取消。备份整个 `server/auth` 时会一起包含用量库，禁止为解除额度而在更新时删除它。代码回退到第五步会失去消耗限制，应同时停止使用付费服务直到恢复限制。
+
+部署后最终验收：访问 HTTPS 首页与 `/api/health`，确认访客生成返回 401；登录 `admin` 配置密钥、登录 `user` 使用服务；连续请求应收到明确限流提示；检查 `journalctl -u sonic-matter` 无启动错误。实际供应商生成会产生费用，应各发起一次音乐和音效请求确认，并在 Replicate / ElevenLabs 账单后台确认消耗；代码测试使用模拟供应商，不会扣费。
+
 `SONIC_CONFIG_KEY` 是服务器 `.env` 中的 32 字节保护密钥（64 位 hex 或标准 base64），仅首次配置时生成，不能随部署重新生成。服务使用 AES-256-GCM 保存到 `server/auth/service-config.db`，数据库文件权限 600。首次设置可用 `node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"` 在服务器本地生成并手动写入 `.env`，不要将输出发送到聊天或提交 Git。重启服务后配置生效；缺少参数时页面提示保护未就绪，保存返回 503。已有配置无法解密时保存拒绝覆盖，需恢复正确保护密钥或备份。
 
 备份 `service-config.db` 必须一并保留包含 `SONIC_CONFIG_KEY` 的 `.env`，二者均仅 root 可读；使用 SQLite 在线备份避免遗漏 WAL。代码回滚无需删除此配置库或重置账号。

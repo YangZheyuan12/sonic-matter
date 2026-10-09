@@ -15,6 +15,7 @@ Object.assign(process.env, {
   AUTH_DIR: path.join(dir, 'auth'), PROJECTS_DIR: path.join(dir, 'projects'), DATA_DIR: path.join(dir, 'generated'),
   SONIC_CONFIG_KEY: encryptionKey, OPENAI_API_KEY: '', REPLICATE_API_TOKEN: 'ignored-legacy-replicate', ELEVENLABS_API_KEY: 'ignored-legacy-elevenlabs',
   MUSIC_REPLICATE_MODEL: 'meta/musicgen', CORS_ORIGIN: '', AUTH_ORIGIN: '', PROVIDER_RETRY_ATTEMPTS: '1',
+  MUSIC_DAILY_LIMIT: '1000', SFX_DAILY_LIMIT: '1000', GENERATION_RATE_PER_MINUTE: '1000', GENERATION_MAX_CONCURRENT: '2',
 })
 delete process.env.SERVE_WEB
 const accounts = new AuthStore(process.env.AUTH_DIR!)

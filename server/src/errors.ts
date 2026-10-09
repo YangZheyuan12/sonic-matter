@@ -15,6 +15,8 @@ export type ErrorCode =
   | 'bad_request'
   | 'unauthorized'
   | 'login_rate_limited'
+  | 'generation_rate_limited'
+  | 'generation_busy'
   | 'not_found'
   | 'forbidden'
   | 'quota_exceeded'

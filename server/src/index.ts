@@ -18,16 +18,19 @@ import { AuthStore } from './authStore.ts'
 import { createAuth } from './auth.ts'
 import { ServiceConfigStore } from './serviceConfigStore.ts'
 import { adminConfigRouter } from './adminConfig.ts'
+import { GenerationStore } from './generationStore.ts'
+import { runGeneration } from './generation.ts'
+import { setTimeout as delay } from 'node:timers/promises'
 import {
   agentTimeoutMs,
   allowedOrigins,
   asyncHandler,
   corsOrigin,
   errorHandler,
-  fetchWithRetry,
   jsonBodyLimit,
   notFoundHandler,
   requestContext,
+  providerTimeoutMs,
 } from './http.ts'
 
 const app = express()
@@ -48,6 +51,7 @@ const replicateModel = process.env.MUSIC_REPLICATE_MODEL ?? 'meta/musicgen'
 const authStore = new AuthStore(path.resolve(process.cwd(), process.env.AUTH_DIR ?? 'auth'))
 const auth = createAuth(authStore, { origin: process.env.AUTH_ORIGIN })
 const serviceConfig = new ServiceConfigStore(authStore.dir)
+const generationStore = new GenerationStore(authStore.dir)
 
 app.use(requestContext())
 // 配了 CORS_ORIGIN 就只放行名单里的来源，其它来源由 errorHandler 转成 403。
@@ -182,9 +186,15 @@ function platformSecret(provider: 'replicate' | 'elevenlabs', label: string) {
   return value
 }
 
-/** 取音频二进制。上游可能返回 5xx，交给 fetchWithRetry 重试。 */
+/** 付费任务不自动重试；同一信号覆盖响应体，防止慢速下载占住并发槽位。 */
+function platformFetch(url: string, init: RequestInit, signal?: AbortSignal) {
+  const timeout = AbortSignal.timeout(providerTimeoutMs)
+  return fetch(url, { ...init, redirect: 'error', signal: signal ? AbortSignal.any([signal, timeout]) : timeout })
+}
+
+/** 取音频二进制，不向下载地址发送任何平台凭据。 */
 async function downloadGeneratedAudio(url: string, extension: string, signal?: AbortSignal) {
-  const response = await fetchWithRetry(url, {}, { label: '音频下载', signal })
+  const response = await platformFetch(url, {}, signal)
   if (!response.ok) throw new Error(`AUDIO_DOWNLOAD_${response.status}`)
   const buffer = Buffer.from(await response.arrayBuffer())
   await mkdir(generatedDir, { recursive: true })
@@ -197,18 +207,18 @@ async function generateWithReplicate(prompt: string, durationSeconds: number, to
   const model = replicateModel
   const modelPath = model.includes('/') ? `/models/${model}/predictions` : '/predictions'
   const baseUrl = 'https://api.replicate.com/v1'
-  const response = await fetchWithRetry(`${baseUrl}${modelPath}`, {
+  const response = await platformFetch(`${baseUrl}${modelPath}`, {
     method: 'POST', redirect: 'error',
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ ...(model.includes('/') ? {} : { version: model }), input: { prompt, duration: durationSeconds } }),
-  }, { label: '音乐生成任务创建', signal })
+  }, signal)
   if (!response.ok) throw new Error(`REPLICATE_CREATE_${response.status}`)
   let prediction = await response.json() as { id: string; status: string; output?: string | string[]; error?: string }
   const deadline = Date.now() + 180_000
   while (['starting', 'processing'].includes(prediction.status) && Date.now() < deadline) {
-    await new Promise(resolve => setTimeout(resolve, 2500))
+    await delay(2500, undefined, { signal })
     if (!/^[a-zA-Z0-9_-]+$/.test(prediction.id)) throw new Error('REPLICATE_INVALID_ID')
-    const poll = await fetchWithRetry(`${baseUrl}/predictions/${prediction.id}`, { redirect: 'error', headers: { Authorization: `Bearer ${token}` } }, { label: '音乐生成任务轮询', signal })
+    const poll = await platformFetch(`${baseUrl}/predictions/${prediction.id}`, { headers: { Authorization: `Bearer ${token}` } }, signal)
     if (!poll.ok) throw new Error(`REPLICATE_POLL_${poll.status}`)
     prediction = await poll.json() as typeof prediction
   }
@@ -220,11 +230,11 @@ async function generateWithReplicate(prompt: string, durationSeconds: number, to
 
 async function generateWithElevenLabs(description: string, mixer: z.infer<typeof soundMixerSchema>, apiKey: string, signal?: AbortSignal) {
   const baseUrl = 'https://api.elevenlabs.io/v1'
-  const response = await fetchWithRetry(`${baseUrl}/sound-generation`, {
+  const response = await platformFetch(`${baseUrl}/sound-generation`, {
     method: 'POST', redirect: 'error',
     headers: { 'xi-api-key': apiKey, 'Content-Type': 'application/json' },
     body: JSON.stringify({ text: `${description}. Duration ${mixer.length} seconds. Density ${mixer.density} percent. Brightness ${mixer.brightness} percent. Spaciousness ${mixer.space} percent. Compactness ${mixer.compact} percent.` }),
-  }, { label: '音效生成', signal })
+  }, signal)
   if (!response.ok) throw new Error(`ELEVENLABS_GENERATE_${response.status}`)
   const buffer = Buffer.from(await response.arrayBuffer())
   await mkdir(generatedDir, { recursive: true })
@@ -296,14 +306,16 @@ app.post('/api/music/plan', asyncHandler(async (req, res) => {
 app.post('/api/music/generate', auth.requireAccount, auth.protectMutation, asyncHandler(async (req, res) => {
   const parsed = musicGenerateInputSchema.safeParse(req.body)
   if (!parsed.success) throw badRequest('音乐描述或时长不正确；平台服务配置由管理员统一管理，不接受客户端密钥、地址或模型。')
-  const generated = await generateWithReplicate(parsed.data.prompt, parsed.data.duration_seconds, platformSecret('replicate', '音乐'), req.abortSignal)
+  const token = platformSecret('replicate', '音乐')
+  const generated = await runGeneration(generationStore, req, res, 'replicate', signal => generateWithReplicate(parsed.data.prompt, parsed.data.duration_seconds, token, signal))
   return res.json({ ...generated, provider: 'replicate', model: replicateModel, source: 'audio-model' })
 }))
 
 app.post('/api/sfx/generate', auth.requireAccount, auth.protectMutation, asyncHandler(async (req, res) => {
   const parsed = soundGenerateInputSchema.safeParse(req.body)
   if (!parsed.success) throw badRequest('音效描述或调音台参数不正确；平台服务配置由管理员统一管理，不接受客户端密钥、地址或模型。')
-  const generated = await generateWithElevenLabs(parsed.data.description, parsed.data.mixer, platformSecret('elevenlabs', '音效'), req.abortSignal)
+  const token = platformSecret('elevenlabs', '音效')
+  const generated = await runGeneration(generationStore, req, res, 'elevenlabs', signal => generateWithElevenLabs(parsed.data.description, parsed.data.mixer, token, signal))
   return res.json({ ...generated, provider: 'elevenlabs', source: 'audio-model' })
 }))
 
@@ -346,7 +358,7 @@ app.use(errorHandler)
 
 /** 单测用 SONIC_MATTER_TEST=1 引入 app 做接口冒烟，不监听端口。 */
 export { app }
-export function closeStores() { authStore.close(); serviceConfig.close() }
+export function closeStores() { authStore.close(); serviceConfig.close(); generationStore.close() }
 
 function startServer() {
   const server = app.listen(port, () => {
