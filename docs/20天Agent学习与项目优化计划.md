@@ -160,48 +160,25 @@
 - `server/src/agent/types.test.ts`
 - 建议 commit：`功能：建立 Agent 运行记录与校验模型`
 
-## 第 3 天：有限状态机与生命周期转换
-
-> 修正说明：本日只处理 Run 的生命周期状态和非法转换。最大步骤、总超时、最大修订次数与循环检测需要 Runner 的执行上下文，不属于单纯的状态转换；它们分别留到第 9 天、第 12 天和第 18 天实现。第 3 天只定义 `failed`、`canceled`、`completed` 是不可离开的终止状态。
+## 第 3 天：状态机和终止条件
 
 ### 学习
 
-- 状态表示“现在处于哪个阶段”，事件表示“刚刚发生了什么”。
-- 转换表、纯函数、不可变更新和可辨识联合类型。
-- 活动状态与终止状态，以及状态机和 Runner 执行策略的职责边界。
+- 状态、事件和状态转换。
+- 终止状态、最大步骤、最大修订次数和循环检测。
 - 为什么不能用一堆互相独立的布尔值表示 Agent 状态。
 
 ### 动手
 
-- 画出完整主路径：`planning → executing → validating → awaiting_approval → completed`。
-- 补充修订路径：`validating → revising → executing`，以及活动状态进入 `failed`、`canceled` 的路径。
-- 定义 `AgentRunEvent` 可辨识联合类型，事件至少覆盖计划完成、执行完成、验收通过、请求修订、修订完成、批准、拒绝、失败和取消。
-- 实现纯函数 `transitionRun(current, event)`：成功时返回新的 Run 快照，不能修改传入对象。
+- 画出 `planning → executing → validating → revising → awaiting_approval` 状态图。
+- 实现纯函数 `transitionRun(current, event)`。
 - 对所有合法转换和关键非法转换编写表驱动测试。
-- 非法转换返回稳定的结构化错误码 `invalid_run_transition`，不抛出含糊异常，也不静默跳转。
-
-### 本日转换表
-
-| 当前状态 | 事件 | 下一状态 |
-| --- | --- | --- |
-| `planning` | 计划完成 | `executing` |
-| `executing` | 执行完成 | `validating` |
-| `validating` | 验收通过 | `awaiting_approval` |
-| `validating` | 请求修订 | `revising` |
-| `revising` | 修订计划完成 | `executing` |
-| `awaiting_approval` | 用户批准 | `completed` |
-| `awaiting_approval` | 用户拒绝 | `canceled` |
-| 任意活动状态 | 执行失败 | `failed` |
-| 任意活动状态 | 用户取消 | `canceled` |
-
-是否还有修订预算由 Runner 决定：有预算时向状态机发送“请求修订”，没有预算时发送“执行失败”。状态机本身不读取或累加修订次数。
+- 定义失败、取消和完成后的行为。
 
 ### 验收
 
-- 主路径、修订路径、失败路径和取消路径都有测试。
 - `completed`、`failed`、`canceled` 不能重新进入执行状态。
-- 非法转换得到 `invalid_run_transition`，原 Run 保持不变。
-- 相同的 Run 与事件总是得到相同结果，转换逻辑不依赖 Express、数据库、LLM 或系统时间。
+- 非法转换得到稳定错误，而不是静默跳转。
 
 ### 产出
 
