@@ -10,6 +10,7 @@ import {
   drumVoice,
   instrumentLabel,
   instrumentOptions,
+  insertTrack,
   isDrumTrack,
   MAX_TRACK_NAME,
   moveTrack,
@@ -21,6 +22,7 @@ import {
   setTrackInstrument,
   snapPitchToDrum,
   trackRows,
+  updateTrackFields,
   uniqueTrackId,
   uniqueTrackName,
 } from './tracks.ts'
@@ -120,6 +122,21 @@ test('createTrack 用预设补全颜色与默认混音', () => {
   const named = createTrack(project(track({ name: '大提琴' })), '大提琴', '大提琴')
   assert.equal(named.name, '大提琴 2')
   assert.equal(createTrack(project(), 'Theremin').instrument, 'Theremin')
+})
+
+test('insertTrack 拒绝重复 ID，轨道属性更新守住数值边界', () => {
+  const base = project(track())
+  assert.equal(insertTrack(base, track({ name: '重复 ID' })), base)
+
+  const inserted = insertTrack(base, track({ id: 'track-2', name: '轨道 2' }))
+  assert.deepEqual(inserted.tracks.map(item => item.id), ['track-1', 'track-2'])
+  assert.notEqual(inserted, base)
+
+  const updated = updateTrackFields(base, 'track-1', { gain: .5, pan: -.25 })
+  assert.equal(updated.tracks[0].gain, .5)
+  assert.equal(updated.tracks[0].pan, -.25)
+  assert.equal(updateTrackFields(base, 'track-1', { gain: 1.1 }), base)
+  assert.equal(updateTrackFields(base, 'missing', { gain: .5 }), base)
 })
 
 test('duplicateTrack 深拷贝音符并插在源轨道后面', () => {

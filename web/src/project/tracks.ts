@@ -1,5 +1,12 @@
 import { pitchName, type Project, type Track } from './model.ts'
 import { makeNoteIds, ROLL_HIGH_PITCH, ROLL_LOW_PITCH, sortNotes } from './notes.ts'
+import {
+  addTrackSnapshot,
+  canRemoveTrackSnapshot,
+  removeTrackSnapshot,
+  updateTrackSnapshot,
+  type MutableTrackFields,
+} from '../../../shared/project/trackMutations.ts'
 
 /**
  * 轨道管理的纯逻辑：乐器预设、鼓组映射、增删改排序。
@@ -178,8 +185,8 @@ export function createTrack(project: Project, instrument: string, name?: string)
 }
 
 export function insertTrack(project: Project, track: Track): Project {
-  if (project.tracks.some(item => item.id === track.id)) return project
-  return { ...project, tracks: [...project.tracks, track] }
+  const result = addTrackSnapshot(project, track)
+  return result.ok ? result.project : project
 }
 
 /** 复制轨道：音符深拷贝 + 换新 id，插在源轨道后面，名字加「副本」。 */
@@ -202,13 +209,13 @@ export function duplicateTrack(project: Project, id: string): Project {
 }
 
 export function canRemoveTrack(project: Project, id: string): boolean {
-  return project.tracks.length > 1 && project.tracks.some(track => track.id === id)
+  return canRemoveTrackSnapshot(project, id)
 }
 
 /** 删除轨道：最后一条不允许删（否则卷帘和导出会没有可编辑内容）。 */
 export function removeTrack(project: Project, id: string): Project {
-  if (!canRemoveTrack(project, id)) return project
-  return { ...project, tracks: project.tracks.filter(track => track.id !== id) }
+  const result = removeTrackSnapshot(project, id)
+  return result.ok ? result.project : project
 }
 
 /** 上下移动轨道：到边界后原样返回，不产生撤销步骤。 */
@@ -227,7 +234,14 @@ export function renameTrack(project: Project, id: string, name: string): Project
   const trimmed = trimName(name)
   const track = project.tracks.find(item => item.id === id)
   if (!track || !trimmed || trimmed === track.name) return project
-  return { ...project, tracks: project.tracks.map(item => item.id === id ? { ...item, name: trimmed } : item) }
+  const result = updateTrackSnapshot(project, id, { name: trimmed })
+  return result.ok ? result.project : project
+}
+
+/** Agent 与界面共用的基础属性更新边界；音符和片段由各自的专用逻辑处理。 */
+export function updateTrackFields(project: Project, id: string, update: MutableTrackFields): Project {
+  const result = updateTrackSnapshot(project, id, update)
+  return result.ok ? result.project : project
 }
 
 /** 换乐器：同时带上预设配色，鼓组还会把不属于鼓件行的音高吸附到最近鼓件。 */
