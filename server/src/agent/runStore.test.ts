@@ -163,3 +163,58 @@ test('数据库和查询结果均不包含 API Key 或 Authorization 值', (t) =
   const databaseBytes = readFileSync(store.databasePath).toString('utf8')
   assert.doesNotMatch(databaseBytes, /super-secret-value|private-authorization-value/)
 })
+
+test('账号绑定的 Run 持久化工程快照，并以事务保证审批幂等', (t) => {
+  const { dir, store } = tempStore(t)
+  const project = {
+    title: '待审批工程',
+    tempo: 90,
+    key: 'C Major',
+    duration: 10,
+    tracks: [{
+      id: 'melody',
+      name: '主旋律',
+      kind: 'midi' as const,
+      instrument: 'Cello',
+      color: '#ffffff',
+      notes: [],
+    }],
+  }
+  const awaiting = run({
+    status: 'awaiting_approval',
+    updatedAt: 1_200,
+    steps: [],
+  })
+  store.createOwned({
+    run: awaiting,
+    ownerId: 'account-user',
+    sourceProject: project,
+    constraints: [{
+      id: 'need-cello',
+      type: 'required_instrument',
+      instrument: 'Cello',
+    }],
+  })
+  store.setCandidateProject(awaiting.id, 'account-user', project)
+
+  const first = store.decideOwned(awaiting.id, 'account-user', 'approved', 1_300)
+  const second = store.decideOwned(awaiting.id, 'account-user', 'approved', 1_400)
+  assert.equal(first.kind, 'updated')
+  assert.equal(second.kind, 'idempotent')
+  if (first.kind === 'updated' && second.kind === 'idempotent') {
+    assert.equal(first.resource.run.status, 'completed')
+    assert.deepEqual(second.resource.approvedProject, project)
+    assert.equal(second.resource.run.updatedAt, first.resource.run.updatedAt)
+  }
+  assert.equal(store.getOwned(awaiting.id, 'another-account'), null)
+
+  store.close()
+  const reopened = new AgentRunStore(dir)
+  try {
+    const loaded = reopened.getOwned(awaiting.id, 'account-user')
+    assert.equal(loaded?.decision, 'approved')
+    assert.deepEqual(loaded?.approvedProject, project)
+  } finally {
+    reopened.close()
+  }
+})

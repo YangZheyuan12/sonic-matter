@@ -1,7 +1,14 @@
 import { chmodSync, mkdirSync } from 'node:fs'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
+import { z } from 'zod'
 import { redact, redactText } from '../logger.ts'
+import { projectSchema } from '../projectSchema.ts'
+import {
+  evaluationConstraintsSchema,
+  type EvaluationConstraint,
+} from './evaluator.ts'
+import { transitionRun } from './stateMachine.ts'
 import {
   agentRunSchema,
   type AgentRun,
@@ -60,6 +67,21 @@ const SCHEMA = `
     ON agent_steps (run_id, position);
   CREATE INDEX IF NOT EXISTS idx_agent_tool_calls_step
     ON agent_tool_calls (run_id, step_id, position);
+
+  CREATE TABLE IF NOT EXISTS agent_run_resources (
+    run_id                 TEXT PRIMARY KEY,
+    owner_id               TEXT NOT NULL,
+    constraints_json       TEXT NOT NULL,
+    source_project_json    TEXT NOT NULL,
+    candidate_project_json TEXT,
+    approved_project_json  TEXT,
+    decision               TEXT CHECK (decision IN ('approved', 'rejected')),
+    decided_at             INTEGER,
+    FOREIGN KEY (run_id) REFERENCES agent_runs(id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_agent_run_resources_owner
+    ON agent_run_resources (owner_id, run_id);
 `
 
 type RunRow = {
@@ -96,6 +118,47 @@ type ToolCallRow = {
   started_at: number | null
   finished_at: number | null
 }
+
+type Project = z.infer<typeof projectSchema>
+
+type ResourceRow = {
+  owner_id: string
+  constraints_json: string
+  source_project_json: string
+  candidate_project_json: string | null
+  approved_project_json: string | null
+  decision: AgentRunDecision | null
+  decided_at: number | null
+}
+
+export type AgentRunDecision = 'approved' | 'rejected'
+
+export type AgentRunResource = Readonly<{
+  run: AgentRun
+  ownerId: string
+  constraints: readonly EvaluationConstraint[]
+  sourceProject: Project
+  candidateProject?: Project
+  approvedProject?: Project
+  decision?: AgentRunDecision
+  decidedAt?: number
+}>
+
+export type AgentRunResourceMutation =
+  | Readonly<{ kind: 'updated' | 'idempotent'; resource: AgentRunResource }>
+  | Readonly<{ kind: 'missing' }>
+  | Readonly<{
+      kind: 'conflict'
+      resource: AgentRunResource
+      message: string
+    }>
+
+const ownedRunInputSchema = z.object({
+  run: agentRunSchema,
+  ownerId: z.string().trim().min(1).max(120),
+  constraints: evaluationConstraintsSchema,
+  sourceProject: projectSchema,
+}).strict()
 
 const PLAIN_SECRET_ASSIGNMENT = /(\b(?:api[-_ ]?key|authorization|access[-_ ]?token|refresh[-_ ]?token|token|secret|password|cookie)\b\s*[:=]\s*)([^\r\n,;]+)/gi
 
@@ -191,6 +254,25 @@ export class AgentRunStore {
     )
   }
 
+  #updateRun(db: DatabaseSync, run: AgentRun): void {
+    db.prepare(`
+      UPDATE agent_runs SET
+        status = ?, instruction = ?, created_at = ?, updated_at = ?,
+        summary = ?, error_code = ?, error_message = ?
+      WHERE id = ?
+    `).run(
+      run.status,
+      run.instruction,
+      run.createdAt,
+      run.updatedAt,
+      run.summary ?? null,
+      run.errorCode ?? null,
+      run.errorMessage ?? null,
+      run.id,
+    )
+    this.#replaceTrace(db, run)
+  }
+
   #replaceTrace(db: DatabaseSync, run: AgentRun): void {
     db.prepare('DELETE FROM agent_steps WHERE run_id = ?').run(run.id)
     const insertStep = db.prepare(`
@@ -248,34 +330,49 @@ export class AgentRunStore {
     })
   }
 
+  /** Run 的账号、约束与工程快照和 Trace 在同一事务中创建。 */
+  createOwned(input: Readonly<{
+    run: AgentRun
+    ownerId: string
+    constraints: readonly EvaluationConstraint[]
+    sourceProject: Project
+  }>): AgentRunResource {
+    const parsed = ownedRunInputSchema.parse(input)
+    const run = sanitizeRun(parsed.run)
+    return this.#transaction((db) => {
+      this.#insertRun(db, run)
+      this.#replaceTrace(db, run)
+      db.prepare(`
+        INSERT INTO agent_run_resources (
+          run_id, owner_id, constraints_json, source_project_json
+        ) VALUES (?, ?, ?, ?)
+      `).run(
+        run.id,
+        parsed.ownerId,
+        JSON.stringify(parsed.constraints),
+        JSON.stringify(parsed.sourceProject),
+      )
+      return {
+        run,
+        ownerId: parsed.ownerId,
+        constraints: parsed.constraints,
+        sourceProject: parsed.sourceProject,
+      }
+    })
+  }
+
   /** 更新的是完整 Trace 快照；事务内替换子记录，重复更新不会追加 Tool Call。 */
   update(input: AgentRun): AgentRun | null {
     const run = sanitizeRun(agentRunSchema.parse(input))
     return this.#transaction((db) => {
       const exists = db.prepare('SELECT 1 FROM agent_runs WHERE id = ?').get(run.id)
       if (exists === undefined) return null
-      db.prepare(`
-        UPDATE agent_runs SET
-          status = ?, instruction = ?, created_at = ?, updated_at = ?,
-          summary = ?, error_code = ?, error_message = ?
-        WHERE id = ?
-      `).run(
-        run.status,
-        run.instruction,
-        run.createdAt,
-        run.updatedAt,
-        run.summary ?? null,
-        run.errorCode ?? null,
-        run.errorMessage ?? null,
-        run.id,
-      )
-      this.#replaceTrace(db, run)
+      this.#updateRun(db, run)
       return run
     })
   }
 
-  get(id: string): AgentRun | null {
-    const db = this.#open()
+  #readRun(db: DatabaseSync, id: string): AgentRun | null {
     const row = db.prepare('SELECT * FROM agent_runs WHERE id = ?').get(id) as RunRow | undefined
     if (row === undefined) return null
     const stepRows = db.prepare(`
@@ -324,6 +421,148 @@ export class AgentRunStore {
       ...(row.error_code === null ? {} : { errorCode: row.error_code }),
       ...(row.error_message === null ? {} : { errorMessage: row.error_message }),
     }))
+  }
+
+  get(id: string): AgentRun | null {
+    return this.#readRun(this.#open(), id)
+  }
+
+  #readOwned(db: DatabaseSync, id: string, ownerId: string): AgentRunResource | null {
+    const row = db.prepare(`
+      SELECT owner_id, constraints_json, source_project_json,
+             candidate_project_json, approved_project_json, decision, decided_at
+      FROM agent_run_resources
+      WHERE run_id = ? AND owner_id = ?
+    `).get(id, ownerId) as ResourceRow | undefined
+    if (row === undefined) return null
+    const run = this.#readRun(db, id)
+    if (run === null) return null
+    const constraints = evaluationConstraintsSchema.parse(JSON.parse(row.constraints_json))
+    const sourceProject = projectSchema.parse(JSON.parse(row.source_project_json))
+    const candidateProject = row.candidate_project_json === null
+      ? undefined
+      : projectSchema.parse(JSON.parse(row.candidate_project_json))
+    const approvedProject = row.approved_project_json === null
+      ? undefined
+      : projectSchema.parse(JSON.parse(row.approved_project_json))
+    return {
+      run,
+      ownerId: row.owner_id,
+      constraints,
+      sourceProject,
+      ...(candidateProject === undefined ? {} : { candidateProject }),
+      ...(approvedProject === undefined ? {} : { approvedProject }),
+      ...(row.decision === null ? {} : { decision: row.decision }),
+      ...(row.decided_at === null ? {} : { decidedAt: Number(row.decided_at) }),
+    }
+  }
+
+  getOwned(id: string, ownerId: string): AgentRunResource | null {
+    return this.#readOwned(this.#open(), id, ownerId)
+  }
+
+  setCandidateProject(id: string, ownerId: string, project: Project): AgentRunResource | null {
+    const candidate = projectSchema.parse(project)
+    return this.#transaction((db) => {
+      const resource = this.#readOwned(db, id, ownerId)
+      if (resource === null) return null
+      db.prepare(`
+        UPDATE agent_run_resources SET candidate_project_json = ?
+        WHERE run_id = ? AND owner_id = ?
+      `).run(JSON.stringify(candidate), id, ownerId)
+      return this.#readOwned(db, id, ownerId)
+    })
+  }
+
+  cancelOwned(id: string, ownerId: string, occurredAt: number): AgentRunResourceMutation {
+    return this.#transaction((db) => {
+      const resource = this.#readOwned(db, id, ownerId)
+      if (resource === null) return { kind: 'missing' }
+      if (
+        resource.run.status === 'canceled' &&
+        resource.decision === undefined &&
+        resource.run.errorCode === 'run_canceled'
+      ) {
+        return { kind: 'idempotent', resource }
+      }
+      if (['completed', 'failed', 'canceled'].includes(resource.run.status)) {
+        return {
+          kind: 'conflict',
+          resource,
+          message: `Run 已处于终态 ${resource.run.status}，不能取消。`,
+        }
+      }
+      const transitioned = transitionRun(resource.run, {
+        type: 'run_canceled',
+        occurredAt: Math.max(Math.floor(occurredAt), resource.run.updatedAt),
+        reason: '用户通过 Run API 取消了执行。',
+      })
+      if (!transitioned.ok) {
+        return { kind: 'conflict', resource, message: transitioned.message }
+      }
+      this.#updateRun(db, transitioned.run)
+      return {
+        kind: 'updated',
+        resource: this.#readOwned(db, id, ownerId)!,
+      }
+    })
+  }
+
+  decideOwned(
+    id: string,
+    ownerId: string,
+    decision: AgentRunDecision,
+    occurredAt: number,
+  ): AgentRunResourceMutation {
+    return this.#transaction((db) => {
+      const resource = this.#readOwned(db, id, ownerId)
+      if (resource === null) return { kind: 'missing' }
+      if (resource.decision === decision) return { kind: 'idempotent', resource }
+      if (resource.decision !== undefined) {
+        return {
+          kind: 'conflict',
+          resource,
+          message: `Run 已经${resource.decision === 'approved' ? '批准' : '拒绝'}，不能改为${decision === 'approved' ? '批准' : '拒绝'}。`,
+        }
+      }
+      if (resource.run.status !== 'awaiting_approval') {
+        return {
+          kind: 'conflict',
+          resource,
+          message: `Run 当前状态为 ${resource.run.status}，不能${decision === 'approved' ? '批准' : '拒绝'}。`,
+        }
+      }
+      if (decision === 'approved' && resource.candidateProject === undefined) {
+        return {
+          kind: 'conflict',
+          resource,
+          message: 'Run 尚未保存候选工程，不能批准。',
+        }
+      }
+      const decidedAt = Math.max(Math.floor(occurredAt), resource.run.updatedAt)
+      const transitioned = transitionRun(resource.run, decision === 'approved'
+        ? { type: 'approval_granted', occurredAt: decidedAt }
+        : { type: 'approval_rejected', occurredAt: decidedAt, reason: '用户拒绝了候选工程。' })
+      if (!transitioned.ok) {
+        return { kind: 'conflict', resource, message: transitioned.message }
+      }
+      this.#updateRun(db, transitioned.run)
+      db.prepare(`
+        UPDATE agent_run_resources SET
+          decision = ?, decided_at = ?, approved_project_json = ?
+        WHERE run_id = ? AND owner_id = ?
+      `).run(
+        decision,
+        decidedAt,
+        decision === 'approved' ? JSON.stringify(resource.candidateProject) : null,
+        id,
+        ownerId,
+      )
+      return {
+        kind: 'updated',
+        resource: this.#readOwned(db, id, ownerId)!,
+      }
+    })
   }
 
   close(): void {

@@ -19,6 +19,7 @@ export type ErrorCode =
   | 'generation_busy'
   | 'not_found'
   | 'forbidden'
+  | 'conflict'
   | 'quota_exceeded'
   | 'payload_too_large'
   | 'cors_not_allowed'
@@ -67,6 +68,10 @@ export const notFound = (message = '接口不存在。') => new AppError(message
 /** 不允许修改别人的东西（云端工程不是本机浏览器保存的）。注意这不是账号认证，只是防误改。 */
 export const forbidden = (message: string, detail?: string) =>
   new AppError(message, { code: 'forbidden', status: 403, detail })
+
+/** 资源存在，但当前状态不允许执行请求的动作。 */
+export const conflict = (message: string, detail?: string) =>
+  new AppError(message, { code: 'conflict', status: 409, detail })
 
 /** 配额用尽（云端工程数量上限）：重试没有意义，要用户先删掉一些。 */
 export const quotaExceeded = (message: string, detail?: string) =>

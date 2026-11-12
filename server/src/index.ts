@@ -20,6 +20,8 @@ import { ServiceConfigStore } from './serviceConfigStore.ts'
 import { adminConfigRouter } from './adminConfig.ts'
 import { GenerationStore } from './generationStore.ts'
 import { runGeneration } from './generation.ts'
+import { agentRunsRouter } from './agentRuns.ts'
+import { AgentRunStore } from './agent/runStore.ts'
 import { setTimeout as delay } from 'node:timers/promises'
 import {
   agentTimeoutMs,
@@ -52,6 +54,7 @@ const authStore = new AuthStore(path.resolve(process.cwd(), process.env.AUTH_DIR
 const auth = createAuth(authStore, { origin: process.env.AUTH_ORIGIN })
 const serviceConfig = new ServiceConfigStore(authStore.dir)
 const generationStore = new GenerationStore(authStore.dir)
+const agentRunStore = new AgentRunStore(path.resolve(process.cwd(), process.env.AGENT_RUNS_DIR ?? 'agent-runs'))
 
 app.use(requestContext())
 // 配了 CORS_ORIGIN 就只放行名单里的来源，其它来源由 errorHandler 转成 403。
@@ -255,6 +258,28 @@ app.post('/api/agent/test', asyncHandler(async (req, res) => {
 /** 没配 Key 时用本地 fallback 顶上，其它错误照常抛出。 */
 const isNotConfigured = (error: unknown) => toAppError(error).code === 'provider_not_configured'
 
+app.use('/api/agent/runs', agentRunsRouter({
+  store: agentRunStore,
+  auth,
+  resolvePlanner: (connection) => {
+    const config = resolveAgentConfig(connection)
+    if (!config.apiKey) return { agentKeyAvailable: false }
+    return {
+      agentKeyAvailable: true,
+      model: {
+        generateStructured: (request) => structuredResponse(
+          `${request.systemPrompt}\n\n${request.userPrompt}`,
+          request.outputName,
+          { ...request.outputSchema },
+          z.unknown(),
+          config,
+          request.signal,
+        ),
+      },
+    }
+  },
+}))
+
 app.post('/api/concept/interpret', asyncHandler(async (req, res) => {
   const parsed = conceptInputSchema.safeParse(req.body)
   if (!parsed.success) throw badRequest('游戏理解输入不正确，请检查焦点文字和游戏资料长度。', zodDetail(parsed.error))
@@ -358,7 +383,7 @@ app.use(errorHandler)
 
 /** 单测用 SONIC_MATTER_TEST=1 引入 app 做接口冒烟，不监听端口。 */
 export { app }
-export function closeStores() { authStore.close(); serviceConfig.close(); generationStore.close() }
+export function closeStores() { authStore.close(); serviceConfig.close(); generationStore.close(); agentRunStore.close() }
 
 function startServer() {
   const server = app.listen(port, () => {
