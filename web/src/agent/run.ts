@@ -118,6 +118,21 @@ export const cancelAgentRun = (id: string, options: ApiOptions = {}) =>
     timeoutMs: options.timeoutMs ?? RUN_TIMEOUT_MS,
   })
 
+const decideAgentRun = (id: string, decision: 'approve' | 'reject', options: ApiOptions = {}) =>
+  apiJson<AgentRunResource>(`/api/agent/runs/${encodeURIComponent(id)}/${decision}`, {
+    ...options,
+    method: 'POST',
+    headers: protection,
+    body: {},
+    timeoutMs: options.timeoutMs ?? RUN_TIMEOUT_MS,
+  })
+
+export const approveAgentRun = (id: string, options: ApiOptions = {}) =>
+  decideAgentRun(id, 'approve', options)
+
+export const rejectAgentRun = (id: string, options: ApiOptions = {}) =>
+  decideAgentRun(id, 'reject', options)
+
 export const pollingStatuses = new Set<AgentRunStatus>([
   'planning',
   'executing',
@@ -126,6 +141,10 @@ export const pollingStatuses = new Set<AgentRunStatus>([
 ])
 
 export const shouldPollRun = (status: AgentRunStatus) => pollingStatuses.has(status)
+
+export const shouldPollResource = (resource: AgentRunResource) =>
+  shouldPollRun(resource.run.status) ||
+  (resource.run.status === 'awaiting_approval' && resource.candidateProject === undefined)
 
 export const canCancelRun = (status: AgentRunStatus) =>
   shouldPollRun(status) || status === 'awaiting_approval'
@@ -161,7 +180,7 @@ export async function pollAgentRun(
     const resource = await request(id, { signal: options.signal })
     if (options.signal.aborted) return null
     options.onUpdate?.(resource)
-    if (!shouldPollRun(resource.run.status)) return resource
+    if (!shouldPollResource(resource)) return resource
     if (!await waitForNextPoll(intervalMs, options.signal)) return null
   }
   return null

@@ -2,6 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { Project } from '../project/model.ts'
 import {
+  approveAgentRun,
   cancelAgentRun,
   canCancelRun,
   constraintText,
@@ -9,8 +10,10 @@ import {
   elapsedText,
   getAgentRun,
   pollAgentRun,
+  rejectAgentRun,
   safeTraceText,
   shouldPollRun,
+  shouldPollResource,
   traceSummary,
   type AgentRunResource,
   type AgentRunStatus,
@@ -48,14 +51,20 @@ test('Run API 使用统一客户端、保护头和编码后的资源地址', asy
     })
     await getAgentRun('run / 1')
     await cancelAgentRun('run / 1')
+    await approveAgentRun('run / 1')
+    await rejectAgentRun('run / 1')
 
     assert.deepEqual(calls.map(call => [call.url, call.init.method]), [
       ['/api/agent/runs', 'POST'],
       ['/api/agent/runs/run%20%2F%201', 'GET'],
       ['/api/agent/runs/run%20%2F%201/cancel', 'POST'],
+      ['/api/agent/runs/run%20%2F%201/approve', 'POST'],
+      ['/api/agent/runs/run%20%2F%201/reject', 'POST'],
     ])
     assert.equal(new Headers(calls[0].init.headers).get('X-Sonic-Auth'), '1')
     assert.equal(new Headers(calls[2].init.headers).get('X-Sonic-Auth'), '1')
+    assert.equal(new Headers(calls[3].init.headers).get('X-Sonic-Auth'), '1')
+    assert.equal(new Headers(calls[4].init.headers).get('X-Sonic-Auth'), '1')
     assert.equal(JSON.parse(String(calls[0].init.body)).instruction, '增加鼓点')
   } finally {
     globalThis.fetch = original
@@ -69,13 +78,35 @@ test('轮询持续同步活动状态，并在等待审批时停止', async () =>
   const result = await pollAgentRun('run-1', {
     signal: new AbortController().signal,
     intervalMs: 0,
-    request: async () => resource(statuses[requestCount++] ?? 'failed'),
+    request: async () => {
+      const status = statuses[requestCount++] ?? 'failed'
+      const next = resource(status)
+      return status === 'awaiting_approval' ? { ...next, candidateProject: project } : next
+    },
     onUpdate: next => updates.push(next.run.status),
   })
 
   assert.equal(result?.run.status, 'awaiting_approval')
   assert.deepEqual(updates, statuses)
   assert.equal(requestCount, 3)
+})
+
+test('等待审批但候选快照尚未落库时继续轮询，拿到候选后才停止', async () => {
+  let requestCount = 0
+  const result = await pollAgentRun('run-1', {
+    signal: new AbortController().signal,
+    intervalMs: 0,
+    request: async () => {
+      requestCount += 1
+      return requestCount === 1
+        ? resource('awaiting_approval')
+        : { ...resource('awaiting_approval'), candidateProject: project }
+    },
+  })
+  assert.equal(requestCount, 2)
+  assert.equal(result?.candidateProject, project)
+  assert.equal(shouldPollResource(resource('awaiting_approval')), true)
+  assert.equal(shouldPollResource({ ...resource('awaiting_approval'), candidateProject: project }), false)
 })
 
 test('取消信号会清除轮询等待，不再发起无意义请求', async () => {

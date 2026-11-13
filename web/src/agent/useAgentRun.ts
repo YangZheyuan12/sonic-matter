@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { errorMessage, isCanceled } from '../api/client.ts'
 import {
+  approveAgentRun,
   cancelAgentRun,
   createAgentRun,
   pollAgentRun,
-  shouldPollRun,
+  rejectAgentRun,
+  shouldPollResource,
   type AgentRunResource,
   type CreateAgentRunInput,
 } from './run.ts'
@@ -14,10 +16,14 @@ export type AgentRunController = {
   creating: boolean
   polling: boolean
   canceling: boolean
+  deciding: 'approve' | 'reject' | null
   busy: boolean
   error: string | null
+  sourceProject: CreateAgentRunInput['project'] | null
   start: (input: CreateAgentRunInput) => Promise<AgentRunResource | null>
   cancel: () => Promise<void>
+  approve: () => Promise<AgentRunResource | null>
+  reject: () => Promise<AgentRunResource | null>
   pause: () => void
   resume: () => void
   dismissError: () => void
@@ -28,12 +34,15 @@ export function useAgentRun(): AgentRunController {
   const mounted = useRef(true)
   const generation = useRef(0)
   const controller = useRef<AbortController | null>(null)
+  const decisionInFlight = useRef(false)
   const resourceRef = useRef<AgentRunResource | null>(null)
   const [resource, setResource] = useState<AgentRunResource | null>(null)
   const [creating, setCreating] = useState(false)
   const [polling, setPolling] = useState(false)
   const [canceling, setCanceling] = useState(false)
+  const [deciding, setDeciding] = useState<'approve' | 'reject' | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [sourceProject, setSourceProject] = useState<CreateAgentRunInput['project'] | null>(null)
 
   const updateResource = useCallback((next: AgentRunResource | null) => {
     resourceRef.current = next
@@ -57,16 +66,18 @@ export function useAgentRun(): AgentRunController {
     const nextController = new AbortController()
     controller.current = nextController
     updateResource(null)
+    setSourceProject(input.project)
     setCreating(true)
     setPolling(false)
     setCanceling(false)
+    setDeciding(null)
     setError(null)
     try {
       const created = await createAgentRun(input, { signal: nextController.signal })
       if (!mounted.current || generation.current !== runGeneration) return null
       updateResource(created)
       setCreating(false)
-      if (!shouldPollRun(created.run.status)) {
+      if (!shouldPollResource(created)) {
         controller.current = null
         return created
       }
@@ -91,6 +102,33 @@ export function useAgentRun(): AgentRunController {
       return null
     }
   }, [updateResource])
+
+  const decide = useCallback(async (decision: 'approve' | 'reject') => {
+    if (decisionInFlight.current) return null
+    const id = resourceRef.current?.run.id
+    if (!id) return null
+    decisionInFlight.current = true
+    setDeciding(decision)
+    setError(null)
+    try {
+      const decided = await (decision === 'approve' ? approveAgentRun(id) : rejectAgentRun(id))
+      if (!mounted.current || resourceRef.current?.run.id !== id) return null
+      updateResource(decided)
+      return decided
+    } catch (reason) {
+      if (!mounted.current || isCanceled(reason)) return null
+      setError(errorMessage(reason, decision === 'approve'
+        ? '批准候选工程失败，请重试。'
+        : '拒绝候选工程失败，请重试。'))
+      return null
+    } finally {
+      decisionInFlight.current = false
+      if (mounted.current && resourceRef.current?.run.id === id) setDeciding(null)
+    }
+  }, [updateResource])
+
+  const approve = useCallback(() => decide('approve'), [decide])
+  const reject = useCallback(() => decide('reject'), [decide])
 
   const cancel = useCallback(async () => {
     const id = resourceRef.current?.run.id
@@ -131,7 +169,7 @@ export function useAgentRun(): AgentRunController {
 
   const resume = useCallback(() => {
     const current = resourceRef.current
-    if (!mounted.current || controller.current || !current || !shouldPollRun(current.run.status)) return
+    if (!mounted.current || controller.current || !current || !shouldPollResource(current)) return
     generation.current += 1
     const runGeneration = generation.current
     const nextController = new AbortController()
@@ -158,10 +196,14 @@ export function useAgentRun(): AgentRunController {
     creating,
     polling,
     canceling,
-    busy: creating || polling || canceling,
+    deciding,
+    busy: creating || polling || canceling || deciding !== null,
     error,
+    sourceProject,
     start,
     cancel,
+    approve,
+    reject,
     pause,
     resume,
     dismissError,
