@@ -9,6 +9,7 @@
     "dev": "tsx watch src/index.ts",
     "start": "tsx src/index.ts",
     "usage": "node src/usage-status.ts",
+    "eval:agent": "node src/agent/evals/run.ts",
     "typecheck": "tsc --noEmit",
     "test": "node --test \"src/**/*.test.ts\"",
     "verify": "npm run typecheck && npm test"

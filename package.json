@@ -14,6 +14,7 @@
     "typecheck": "npm run typecheck --prefix server && npm run typecheck --prefix web",
     "lint": "npm run lint --prefix web",
     "test": "npm run test --prefix web && npm run test --prefix server",
+    "eval:agent": "node server/src/agent/evals/run.ts",
     "build": "npm run build --prefix web",
     "verify": "npm run typecheck && npm run lint && npm run test && npm run build"
   }
