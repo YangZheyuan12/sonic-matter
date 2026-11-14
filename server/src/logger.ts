@@ -13,9 +13,14 @@ export type LogLevel = keyof typeof LEVELS
 
 const SECRET_KEY = /(api[-_]?key|authorization|token|secret|password|cookie)/i
 const SECRET_VALUE = /(sk-[A-Za-z0-9_-]{6,}|Bearer\s+[A-Za-z0-9._-]{6,}|xi-api-key["']?\s*[:=]\s*["']?[A-Za-z0-9_-]{6,})/gi
+const SECRET_ASSIGNMENT = /(["']?(?:api[-_ ]?key|authorization|access[-_ ]?token|refresh[-_ ]?token|token|secret|password|cookie)["']?\s*[:=]\s*["']?)([^\s,;"'}&]+)/gi
+const PRIVATE_KEY = /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/gi
 
 export function redactText(text: string): string {
-  return text.replace(SECRET_VALUE, '***')
+  return text
+    .replace(PRIVATE_KEY, '***')
+    .replace(SECRET_ASSIGNMENT, '$1***')
+    .replace(SECRET_VALUE, '***')
 }
 
 function maskValue(value: unknown): string {

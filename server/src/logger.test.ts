@@ -24,6 +24,19 @@ test('redact 替换字符串里出现的密钥形态', () => {
   assert.deepEqual(redact(['sk-abcdef123456', 'plain']), ['***', 'plain'])
 })
 
+test('redactText 清理自由文本赋值、URL 参数和 PEM 私钥', () => {
+  const privateKey = '-----BEGIN PRIVATE KEY-----\nvery-private-material\n-----END PRIVATE KEY-----'
+  const redacted = redactText(
+    `apiKey=plain-value Authorization:raw-token ` +
+    `https://example.test/?access_token=query-token ${privateKey}`,
+  )
+
+  assert.doesNotMatch(redacted, /plain-value|raw-token|query-token|very-private-material/)
+  assert.match(redacted, /apiKey=\*\*\*/)
+  assert.match(redacted, /Authorization:\*\*\*/)
+  assert.match(redacted, /access_token=\*\*\*/)
+})
+
 test('redact 能处理 Error 与循环深度', () => {
   const redacted = redact(new Error('bad key sk-abcdef123456')) as Record<string, unknown>
   assert.equal(redacted.name, 'Error')

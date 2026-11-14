@@ -39,7 +39,7 @@ const constraints = [{
 }]
 
 type RunResponse = {
-  run: { id: string; status: string; updatedAt: number }
+  run: { id: string; status: string; updatedAt: number; errorCode?: string; errorMessage?: string }
   candidateProject?: ReturnType<typeof project>
   approvedProject?: ReturnType<typeof project>
   decision?: 'approved' | 'rejected'
@@ -70,8 +70,12 @@ async function fixture(t: TestContext) {
           input.signal?.addEventListener('abort', () => resolve(), { once: true })
         })
       }
+      if (input.instruction === '模拟供应商永久挂起') {
+        await new Promise<void>(() => undefined)
+      }
       return createAgentPlan(input, dependencies)
     },
+    plannerTimeoutMs: 30,
   }))
   app.use(errorHandler)
   const server = app.listen(0, '127.0.0.1')
@@ -220,4 +224,43 @@ test('运行中的 Run 可以取消，重复取消幂等，取消后不能批准
 
   const approveCanceled = await f.mutation(`/api/agent/runs/${id}/approve`, user)
   assert.equal(approveCanceled.status, 409)
+})
+
+test('Planner 供应商永久挂起时达到独立截止时间并安全失败', async (t) => {
+  const f = await fixture(t)
+  const user = await f.login('user')
+  const created = await f.mutation('/api/agent/runs', user, {
+    instruction: '模拟供应商永久挂起',
+    project: project(),
+    constraints,
+  })
+  assert.equal(created.status, 202)
+  const id = (await created.json() as RunResponse).run.id
+
+  const failed = await f.waitFor(id, user, 'failed')
+  assert.equal(failed.run.errorCode, 'planner_timeout')
+  assert.match(failed.run.errorMessage ?? '', /执行时限/)
+  assert.equal(failed.candidateProject, undefined)
+})
+
+test('客户端自定义 Agent 地址不能指向环回、内网或云元数据服务', async (t) => {
+  const f = await fixture(t)
+  const user = await f.login('user')
+
+  for (const baseUrl of [
+    'http://127.0.0.1:9000/v1',
+    'https://10.0.0.8/v1',
+    'https://169.254.169.254/latest/meta-data',
+  ]) {
+    const response = await f.mutation('/api/agent/runs', user, {
+      instruction: '检查工程',
+      project: project(),
+      constraints,
+      agent: { baseUrl, apiKey: 'not-a-real-secret', model: 'test-model' },
+    })
+    assert.equal(response.status, 400, baseUrl)
+    const body = await response.json() as { code: string; error: string; detail?: string }
+    assert.equal(body.code, 'bad_request')
+    assert.doesNotMatch(JSON.stringify(body), /127\.0\.0\.1|10\.0\.0\.8|169\.254\.169\.254/)
+  }
 })

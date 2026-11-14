@@ -16,6 +16,7 @@ import {
   type PlannerResult,
 } from './agent/planner.ts'
 import { executeWithRevisions } from './agent/revisionLoop.ts'
+import { inspectClientAgentBaseUrl } from './agent/securityPolicy.ts'
 import {
   AgentRunStore,
   type AgentRunResource,
@@ -32,6 +33,8 @@ const runIdSchema = z
   .min(1)
   .max(80)
   .regex(/^[A-Za-z0-9_-]+$/)
+
+export const DEFAULT_AGENT_PLANNER_TIMEOUT_MS = 45_000
 
 export const agentRunConnectionSchema = z.object({
   baseUrl: z.string().trim().url().optional(),
@@ -70,6 +73,7 @@ export type AgentRunsRouterDependencies = Readonly<{
   execute?: typeof executeWithRevisions
   now?: () => number
   newId?: () => string
+  plannerTimeoutMs?: number
 }>
 
 type ActiveRun = Readonly<{
@@ -149,6 +153,41 @@ function failedRun(run: AgentRun, code: string, message: string, now: number): A
   return result.ok ? result.run : run
 }
 
+type PlanningOutcome =
+  | Readonly<{ kind: 'result'; result: PlannerResult }>
+  | Readonly<{ kind: 'timeout' }>
+  | Readonly<{ kind: 'canceled' }>
+
+async function planWithDeadline(
+  task: (signal: AbortSignal) => Promise<PlannerResult>,
+  externalSignal: AbortSignal,
+  timeoutMs: number,
+): Promise<PlanningOutcome> {
+  if (externalSignal.aborted) return { kind: 'canceled' }
+  const deadline = new AbortController()
+  const signal = AbortSignal.any([externalSignal, deadline.signal])
+  let timer: ReturnType<typeof setTimeout> | undefined
+  let onCanceled: (() => void) | undefined
+  try {
+    return await Promise.race([
+      task(signal).then((result) => ({ kind: 'result', result }) as const),
+      new Promise<PlanningOutcome>((resolve) => {
+        timer = setTimeout(() => {
+          deadline.abort(new DOMException('Planner 执行超时', 'TimeoutError'))
+          resolve({ kind: 'timeout' })
+        }, timeoutMs)
+      }),
+      new Promise<PlanningOutcome>((resolve) => {
+        onCanceled = () => resolve({ kind: 'canceled' })
+        externalSignal.addEventListener('abort', onCanceled, { once: true })
+      }),
+    ])
+  } finally {
+    if (timer !== undefined) clearTimeout(timer)
+    if (onCanceled !== undefined) externalSignal.removeEventListener('abort', onCanceled)
+  }
+}
+
 /**
  * 创建、查询、取消和审批 Agent Run 的 HTTP 路由。
  * 执行在响应 202 后继续进行，客户端通过 GET 轮询 Trace。
@@ -160,6 +199,12 @@ export function agentRunsRouter(dependencies: AgentRunsRouterDependencies) {
   const execute = dependencies.execute ?? executeWithRevisions
   const now = dependencies.now ?? Date.now
   const newId = dependencies.newId ?? crypto.randomUUID
+  const plannerTimeoutMs = Math.max(
+    1,
+    Math.min(300_000, Math.floor(
+      dependencies.plannerTimeoutMs ?? DEFAULT_AGENT_PLANNER_TIMEOUT_MS,
+    )),
+  )
   const activeRuns = new Map<string, ActiveRun>()
 
   const runInBackground = async (
@@ -171,20 +216,34 @@ export function agentRunsRouter(dependencies: AgentRunsRouterDependencies) {
   ) => {
     const { id } = resource.run
     try {
-      const plannerResult: PlannerResult = await plan(
-        {
-          instruction: resource.run.instruction,
-          agentKeyAvailable: access.agentKeyAvailable,
-          signal: controller.signal,
-        },
-        { registry, ...(access.model === undefined ? {} : { model: access.model }) },
+      const planning = await planWithDeadline(
+        (signal) => plan(
+          {
+            instruction: resource.run.instruction,
+            agentKeyAvailable: access.agentKeyAvailable,
+            signal,
+          },
+          { registry, ...(access.model === undefined ? {} : { model: access.model }) },
+        ),
+        controller.signal,
+        plannerTimeoutMs,
       )
       let current = dependencies.store.getOwned(id, resource.ownerId)
       if (current === null || current.run.status === 'canceled') return
-      if (controller.signal.aborted) {
+      if (planning.kind === 'canceled' || controller.signal.aborted) {
         dependencies.store.cancelOwned(id, resource.ownerId, now())
         return
       }
+      if (planning.kind === 'timeout') {
+        dependencies.store.update(failedRun(
+          current.run,
+          'planner_timeout',
+          'Agent Planner 已达到执行时限，请稍后重试。',
+          now(),
+        ))
+        return
+      }
+      const plannerResult = planning.result
       if (!plannerResult.ok) {
         dependencies.store.update(failedRun(
           current.run,
@@ -241,6 +300,10 @@ export function agentRunsRouter(dependencies: AgentRunsRouterDependencies) {
     const parsed = createRunSchema.safeParse(req.body)
     if (!parsed.success) {
       throw badRequest('Agent Run 输入不正确。', zodDetail(parsed.error))
+    }
+    const endpointSecurity = inspectClientAgentBaseUrl(parsed.data.agent?.baseUrl)
+    if (!endpointSecurity.safe) {
+      throw badRequest('Agent 服务地址不安全。', endpointSecurity.message)
     }
     const ownerId = ownerIdOf(req)
     const createdAt = Math.max(0, Math.floor(now()))
