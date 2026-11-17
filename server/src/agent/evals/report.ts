@@ -1,5 +1,8 @@
 import type { AgentEvalSuiteReport } from './runner.ts'
 
+export const AGENT_EVAL_README_START = '<!-- agent-eval:start -->'
+export const AGENT_EVAL_README_END = '<!-- agent-eval:end -->'
+
 function percent(value: number | null): string {
   return value === null ? '无修订样本' : `${(value * 100).toFixed(2)}%`
 }
@@ -68,4 +71,46 @@ export function renderAgentEvalMarkdown(report: AgentEvalSuiteReport): string {
 
 export function renderAgentEvalJson(report: AgentEvalSuiteReport): string {
   return `${JSON.stringify(report, null, 2)}\n`
+}
+
+export function renderAgentEvalReadmeSection(report: AgentEvalSuiteReport): string {
+  const { summary } = report
+  return [
+    AGENT_EVAL_README_START,
+    '## 可重复的 Agent Eval 基线',
+    '',
+    '> 本节由 `npm run eval:agent` 自动更新。基线使用固定离线适配器，不产生付费调用，也不把离线满分等同于真实模型在所有输入上都正确。',
+    '',
+    '| 指标 | 当前基线 |',
+    '| --- | ---: |',
+    `| 案例通过 | ${summary.passedCases}/${summary.totalCases} |`,
+    `| 总成功率 | ${percent(summary.successRate)} |`,
+    `| 约束满足率 | ${percent(summary.constraintSatisfactionRate)} |`,
+    `| 工具成功率 | ${percent(summary.toolSuccessRate)} |`,
+    `| 一次完成率 | ${percent(summary.firstPassCompletionRate)} |`,
+    `| 修订成功率 | ${percent(summary.revisionSuccessRate)} |`,
+    `| 可导出率 | ${percent(summary.exportabilityRate)} |`,
+    `| 平均工具步骤 / 修订总次数 | ${summary.averageSteps.toFixed(2)} / ${summary.totalRevisions} |`,
+    `| 真实付费调用 / 估算成本 | ${summary.paidCallCount} / $${summary.estimatedCostUsd.toFixed(2)} |`,
+    '',
+    '复现命令：`npm run eval:agent`。查看[完整报告](server/src/agent/evals/reports/README.md)、[机器可读结果](server/src/agent/evals/reports/baseline.json)与[三个演示案例](docs/agent/cases.md)。',
+    AGENT_EVAL_README_END,
+  ].join('\n')
+}
+
+export function updateReadmeAgentEvalSection(
+  readme: string,
+  report: AgentEvalSuiteReport,
+): string {
+  const startIndex = readme.indexOf(AGENT_EVAL_README_START)
+  const endIndex = readme.indexOf(AGENT_EVAL_README_END)
+  const hasDuplicateStart = readme.indexOf(AGENT_EVAL_README_START, startIndex + 1) !== -1
+  const hasDuplicateEnd = readme.indexOf(AGENT_EVAL_README_END, endIndex + 1) !== -1
+
+  if (startIndex === -1 || endIndex === -1 || endIndex < startIndex || hasDuplicateStart || hasDuplicateEnd) {
+    throw new Error('README 中必须有且仅有一组合法的 Agent Eval 自动生成标记')
+  }
+
+  const afterEnd = endIndex + AGENT_EVAL_README_END.length
+  return `${readme.slice(0, startIndex)}${renderAgentEvalReadmeSection(report)}${readme.slice(afterEnd)}`
 }

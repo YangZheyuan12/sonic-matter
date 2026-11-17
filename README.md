@@ -1,23 +1,53 @@
 # Sonic / Matter
 
-一个把手势、抽象概念与 Agent 生成结果转化为可编辑音乐工程的交互式 Web Demo。
+Sonic / Matter 是一个面向游戏音乐创作的交互式 Web Demo。它的核心不是让模型一次性“吐出一段音频”，而是让 **Audio Director Agent** 把自然语言意图转成可编辑的结构化音乐工程：先规划，只调用白名单工具，在确定性规则下验收，必要时有限修订，最后把差异交给人确认。
 
 [![CI](https://github.com/YangZheyuan12/sonic-matter/actions/workflows/ci.yml/badge.svg)](https://github.com/YangZheyuan12/sonic-matter/actions/workflows/ci.yml)
 
-## 主要功能
+## 先用 5 分钟理解 Agent
+
+- **问题**：直接生成音频难以解释、难以局部修改，也很难证明约束真的满足。
+- **决策**：让单个 Agent 操作 `Project → Track → Note`，每次工具调用和状态迁移都留下 Trace；候选工程通过确定性评估后，仍必须由用户批准才会写入当前工程。
+- **证据**：固定离线 Eval 覆盖创建、修改、约束、冲突与提示词注入；指标由同一条命令生成到报告和本页。
+- **取舍**：当前不使用多 Agent。所有角色共享一个工程状态，规划、执行、验收之间也没有需要独立自治的边界；引入多 Agent 会增加状态同步、仲裁与延迟，却暂时没有 Eval 证据表明收益更高。现阶段用“单 Agent + 工具注册表 + 确定性评估器 + 有界修订”更容易审计和复现。
+
+继续阅读：[当前架构与状态机](docs/agent/architecture.md) · [成功、自动修订与安全失败案例](docs/agent/cases.md) · [安全边界](docs/agent/security.md) · [2–3 分钟演示稿](docs/agent/demo-script.md)
+
+<!-- agent-eval:start -->
+## 可重复的 Agent Eval 基线
+
+> 本节由 `npm run eval:agent` 自动更新。基线使用固定离线适配器，不产生付费调用，也不把离线满分等同于真实模型在所有输入上都正确。
+
+| 指标 | 当前基线 |
+| --- | ---: |
+| 案例通过 | 20/20 |
+| 总成功率 | 100.00% |
+| 约束满足率 | 100.00% |
+| 工具成功率 | 100.00% |
+| 一次完成率 | 93.33% |
+| 修订成功率 | 100.00% |
+| 可导出率 | 100.00% |
+| 平均工具步骤 / 修订总次数 | 0.85 / 1 |
+| 真实付费调用 / 估算成本 | 0 / $0.00 |
+
+复现命令：`npm run eval:agent`。查看[完整报告](server/src/agent/evals/reports/README.md)、[机器可读结果](server/src/agent/evals/reports/baseline.json)与[三个演示案例](docs/agent/cases.md)。
+<!-- agent-eval:end -->
+
+## 用户能做什么
 
 - **首页**：在背景画布中滑动演奏和录制旋律，从“定义你的游戏”或 Agent 对话进入创作流程。
 - **定义你的游戏**：依次填写游戏资料与 Sound Direction，作为音乐和音效生成的共同创作背景。
-- **音乐工作室**：生成和编辑结构化 Project JSON、管理多轨、使用 DAW 风格钢琴卷帘编辑音符，并导出 MIDI、WAV 和 MP3。
+- **音乐工作室**：让 Agent 创建或修改结构化 Project，查看执行 Trace 和候选差异，批准后再进入历史记录；也可手动管理多轨、编辑音符并导出 MIDI、WAV 和 MP3。
 - **音效实验室**：根据文字生成音效设计计划，通过语义调音台调整长度、密度、明亮度、空间感和紧凑度，支持本地试听与可选真实音效 API。
 - **多服务设置**：分别配置 Agent、音乐生成和音效生成服务；API Key 默认不持久化。
 - **云端工程与分享链接**：把工程存到服务器（`/api/projects`），拿到 `?p=<id>` 链接的人都能打开；本机身份串决定谁可以改。
 
-## 技术栈
+## 实现边界
 
 - 前端：React 19、TypeScript、Vite、Web Audio API、OfflineAudioContext、lamejs
 - 后端：Node.js、Express、OpenAI SDK、Zod
-- AI 工作流：Agent → JSON Schema → Zod 校验 → Project/MIDI JSON → 本地音色渲染
+- Agent 工作流：指令安全检查 → 规划 → 白名单工具 → 候选快照 → 确定性验收 → 有界修订 → 人工审批
+- 工程工作流：JSON Schema / Zod → Project / MIDI JSON → 本地音色渲染
 
 ## 本地启动
 
