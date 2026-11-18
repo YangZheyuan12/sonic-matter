@@ -11,7 +11,7 @@ Sonic / Matter 是一个面向游戏音乐创作的交互式 Web Demo。它的�
 - **证据**：固定离线 Eval 覆盖创建、修改、约束、冲突与提示词注入；指标由同一条命令生成到报告和本页。
 - **取舍**：当前不使用多 Agent。所有角色共享一个工程状态，规划、执行、验收之间也没有需要独立自治的边界；引入多 Agent 会增加状态同步、仲裁与延迟，却暂时没有 Eval 证据表明收益更高。现阶段用“单 Agent + 工具注册表 + 确定性评估器 + 有界修订”更容易审计和复现。
 
-继续阅读：[当前架构与状态机](docs/agent/architecture.md) · [成功、自动修订与安全失败案例](docs/agent/cases.md) · [安全边界](docs/agent/security.md) · [2–3 分钟演示稿](docs/agent/demo-script.md)
+继续阅读：[当前架构与状态机](docs/agent/architecture.md) · [成功、自动修订与安全失败案例](docs/agent/cases.md) · [安全边界](docs/agent/security.md) · [最终验收](docs/agent/final-acceptance.md) · [2–3 分钟演示稿](docs/agent/demo-script.md) · [模拟面试问答](docs/agent/interview-qa.md)
 
 <!-- agent-eval:start -->
 ## 可重复的 Agent Eval 基线
