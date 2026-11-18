@@ -19,7 +19,7 @@ http://8.141.109.141/          -> 308 跳转 HTTPS
 - 更新前备份 `server/projects/projects.db` 与 `server/auth`；它们分别保存云端工程、账号库和初始凭据。
 - `server/generated`、`server/projects` 与 `server/auth` 都是运行时数据，更新源码时不能删除。
 - 已提供固定双账号登录、持久化会话及登录限流；前端“我的 → 账户”支持真实登录与管理员平台密钥配置。
-- 平台音乐与音效生成必须登录，并只使用管理员加密保存的密钥；旧环境变量不能绕过配置状态。分享链接仍可公开读取，工程写入权限仍依赖浏览器本地 owner 串；本地试听、结构化计划和 MIDI 导出无需登录。
+- 可选真实音效生成必须登录，并只使用管理员加密保存的 ElevenLabs 密钥；旧环境变量不能绕过配置状态。分享链接仍可公开读取，工程写入权限仍依赖浏览器本地 owner 串；可编辑音乐、本地试听、结构化计划和 MIDI 导出无需登录。
 
 ## 首次部署
 
@@ -116,27 +116,27 @@ chmod 600 auth/auth.db auth/initial-credentials.txt
 
 会话绝对有效期 7 天，登录时轮换当前会话；同一账号允许最多 20 个浏览器会话并存，超出时淘汰最早会话。会话令牌仅以 SHA-256 哈希存入 `auth.db`，退出即时撤销，重启不丢失会话；禁用账号立即使其会话无效。登录尝试每 IP 每 15 分钟最多 10 次、每账号最多 30 次，超限返回 `429 / login_rate_limited` 和 `Retry-After`，计数同样在 SQLite 持久化。
 
-`createAuth` 导出的 `requireAccount`、`requireRole` 和 `protectMutation` 已用于管理员配置及平台音乐/音效生成接口。“我的 → 账户”使用真实服务器会话，旧 localStorage Demo 登录标记会移除。
+`createAuth` 导出的 `requireAccount`、`requireRole` 和 `protectMutation` 已用于管理员配置及平台音效生成接口。“我的 → 账户”使用真实服务器会话，旧 localStorage Demo 登录标记会移除。
 
 ## 管理员平台密钥（第四步）
 
-管理员登录后在账户页配置 Replicate / ElevenLabs。普通用户看不到配置表单，直接请求配置接口会返回 403；访客返回 401。输入框始终为空白，留空保留原密钥，勾选清除并保存才删除。保存本身不会调用供应商。
+管理员登录后在账户页配置 ElevenLabs。普通用户看不到配置表单，直接请求配置接口会返回 403；访客返回 401。输入框始终为空白，留空保留原密钥，勾选清除并保存才删除。保存本身不会调用供应商。
 
-已登录的管理员和使用者均可调用 `/api/music/generate` 与 `/api/sfx/generate`。这两个写接口要求同源 JSON、有效会话和 `X-Sonic-Auth: 1`，且只读取服务器的加密密钥；浏览器提交的音乐/音效密钥、Base URL 或模型会被拒绝。平台密钥不会返回前端，也不会写入浏览器存储。清除密钥后，对应生成接口返回 `503 / provider_not_configured`；本地试听、结构化音乐/音效计划和 MIDI 导出不受影响。
+已登录的管理员和使用者均可调用 `/api/sfx/generate`。该写接口要求同源 JSON、有效会话和 `X-Sonic-Auth: 1`，且只读取服务器的加密密钥；浏览器提交的音效密钥、Base URL 或模型会被拒绝。平台密钥不会返回前端，也不会写入浏览器存储。清除密钥后，真实音效接口返回 `503 / provider_not_configured`；可编辑音乐、本地试听、结构化音效计划和 MIDI 导出不受影响。
 
 ## 登录后平台生成（第五步）
 
-第五步将管理员保存的平台密钥接入真实音乐和音效生成。Replicate 固定使用服务器允许的 `MUSIC_REPLICATE_MODEL` 与官方 API；ElevenLabs 固定使用官方 Sound Generation API。旧版 `REPLICATE_API_TOKEN` / `ELEVENLABS_API_KEY` 环境变量不再作为生成凭据，避免绕过管理员的配置状态与即时清除操作。
+第五步将管理员保存的平台密钥接入 ElevenLabs 官方 Sound Generation API。旧版 `ELEVENLABS_API_KEY` 环境变量不再作为生成凭据，避免绕过管理员的配置状态与即时清除操作。
 
 ### 最后一步：消耗保护与验收
 
-付费生成接口先在 `AUTH_DIR/generation-usage.db` 原子预占，再联系供应商。默认值适合小范围共享：音乐每天 20 次、音效每天 50 次，全站每分钟合计 3 次，同时最多 2 个任务；额度按北京时间零点重置，管理员和使用者共享。可在 `.env` 调整 `MUSIC_DAILY_LIMIT`（0–10000，0 表示关闭音乐生成）、`SFX_DAILY_LIMIT`（0–10000，0 表示关闭音效生成）、`GENERATION_RATE_PER_MINUTE`（1–1000）和 `GENERATION_MAX_CONCURRENT`（1–20）；非法值会阻止服务启动，避免意外移除限制。
+付费音效接口先在 `AUTH_DIR/generation-usage.db` 原子预占，再联系供应商。默认值适合小范围共享：音效每天 50 次，全站每分钟 3 次，同时最多 2 个任务；额度按北京时间零点重置，管理员和使用者共享。可在 `.env` 调整 `SFX_DAILY_LIMIT`（0–10000，0 表示关闭真实音效生成）、`GENERATION_RATE_PER_MINUTE`（1–1000）和 `GENERATION_MAX_CONCURRENT`（1–20）；非法值会阻止服务启动，避免意外移除限制。
 
 请求一旦预占，即使上游失败或用户取消也计入额度，因为上游可能已经受理并收费；到额度上限后接口返回 `429 / quota_exceeded` 和北京时间次日重置前的 `Retry-After`。短时间频率限制返回 `generation_rate_limited`，并发已满返回 `generation_busy`。付费请求不自动重试，避免网络不确定时重复创建任务；Agent 相关请求不受影响。完成、失败、取消和崩溃遗留任务都会记录服务、时间、结果及错误码，不记录提示词或平台密钥；90 天后清理，不提供公开用量接口。服务器 root 先进入 `/opt/sonic-matter/server`，再用 `/opt/sonic-matter/node/bin/node src/usage-status.ts` 查看当天汇总。
 
 计数和并发槽位跨进程重启保留。崩溃遗留槽位在该任务截止时间加 30 秒后自动回收（默认最多约 5 分 30 秒），回收不退还每日额度；平台任务结束并不代表供应商保证未收费或已取消。备份整个 `server/auth` 时会一起包含用量库，禁止为解除额度而在更新时删除它。代码回退到第五步会失去消耗限制，应同时停止使用付费服务直到恢复限制。
 
-部署后最终验收：访问 HTTPS 首页与 `/api/health`，确认访客生成返回 401；登录 `admin` 配置密钥、登录 `user` 使用服务；连续请求应收到明确限流提示；检查 `journalctl -u sonic-matter` 无启动错误。实际供应商生成会产生费用，应各发起一次音乐和音效请求确认，并在 Replicate / ElevenLabs 账单后台确认消耗；代码测试使用模拟供应商，不会扣费。
+部署后最终验收：访问 HTTPS 首页与 `/api/health`，确认访客生成返回 401；登录 `admin` 配置密钥、登录 `user` 使用服务；连续请求应收到明确限流提示；检查 `journalctl -u sonic-matter` 无启动错误。实际供应商生成会产生费用，应发起一次音效请求，并在 ElevenLabs 账单后台确认消耗；代码测试使用模拟供应商，不会扣费。
 
 `SONIC_CONFIG_KEY` 是服务器 `.env` 中的 32 字节保护密钥（64 位 hex 或标准 base64），仅首次配置时生成，不能随部署重新生成。服务使用 AES-256-GCM 保存到 `server/auth/service-config.db`，数据库文件权限 600。首次设置可用 `node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"` 在服务器本地生成并手动写入 `.env`，不要将输出发送到聊天或提交 Git。重启服务后配置生效；缺少参数时页面提示保护未就绪，保存返回 503。已有配置无法解密时保存拒绝覆盖，需恢复正确保护密钥或备份。
 

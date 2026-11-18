@@ -5,8 +5,8 @@ import { DatabaseSync } from 'node:sqlite'
 import { AppError, type ErrorCode } from './errors.ts'
 import type { ProviderName } from './serviceConfigStore.ts'
 
-export type GenerationLimits = { musicDaily: number; sfxDaily: number; perMinute: number; concurrent: number }
-export const defaultGenerationLimits: GenerationLimits = { musicDaily: 20, sfxDaily: 50, perMinute: 3, concurrent: 2 }
+export type GenerationLimits = { sfxDaily: number; perMinute: number; concurrent: number }
+export const defaultGenerationLimits: GenerationLimits = { sfxDaily: 50, perMinute: 3, concurrent: 2 }
 const dayMs = 86_400_000
 const chinaOffset = 8 * 60 * 60 * 1000
 export const generationDayStart = (now: number) => Math.floor((now + chinaOffset) / dayMs) * dayMs - chinaOffset
@@ -22,7 +22,7 @@ export function readGenerationLimits(env: NodeJS.ProcessEnv = process.env): Gene
     return Number(value)
   }
   return {
-    musicDaily: read('MUSIC_DAILY_LIMIT', 20, 0, 10000), sfxDaily: read('SFX_DAILY_LIMIT', 50, 0, 10000),
+    sfxDaily: read('SFX_DAILY_LIMIT', 50, 0, 10000),
     perMinute: read('GENERATION_RATE_PER_MINUTE', 3, 1, 1000), concurrent: read('GENERATION_MAX_CONCURRENT', 2, 1, 20),
   }
 }
@@ -56,7 +56,7 @@ export class GenerationStore {
     db.exec(`PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 3000;
       CREATE TABLE IF NOT EXISTS generation_calls (
         id TEXT PRIMARY KEY, account_id TEXT NOT NULL,
-        provider TEXT NOT NULL CHECK(provider IN ('replicate','elevenlabs')),
+        provider TEXT NOT NULL CHECK(provider IN ('elevenlabs')),
         started_at INTEGER NOT NULL, expires_at INTEGER NOT NULL, finished_at INTEGER,
         outcome TEXT NOT NULL CHECK(outcome IN ('running','succeeded','failed','canceled','interrupted')),
         error_code TEXT
@@ -75,14 +75,14 @@ export class GenerationStore {
       db.prepare("UPDATE generation_calls SET outcome='interrupted', finished_at=?, error_code='provider_timeout' WHERE outcome='running' AND expires_at<=?").run(now, now)
       db.prepare("DELETE FROM generation_calls WHERE started_at<? AND outcome!='running'").run(now - 90 * dayMs)
       const used = (db.prepare('SELECT COUNT(*) AS n FROM generation_calls WHERE provider=? AND started_at>=?').get(provider, generationDayStart(now)) as { n: number }).n
-      const dailyLimit = provider === 'replicate' ? this.limits.musicDaily : this.limits.sfxDaily
+      const dailyLimit = this.limits.sfxDaily
       if (used >= dailyLimit) throw new GenerationLimitError(
-        `${provider === 'replicate' ? '音乐' : '音效'}今日生成额度已用完（全站每天 ${dailyLimit} 次），请在北京时间明日零点后再试。`,
+        `音效今日生成额度已用完（全站每天 ${dailyLimit} 次），请在北京时间明日零点后再试。`,
         'quota_exceeded', (generationDayStart(now) + dayMs - now) / 1000)
       const recent = db.prepare('SELECT COUNT(*) AS n, MIN(started_at) AS first FROM generation_calls WHERE started_at>?').get(now - 60_000) as { n: number; first: number | null }
       if (recent.n >= this.limits.perMinute) throw new GenerationLimitError('生成请求过于频繁，请稍后再试。', 'generation_rate_limited', ((recent.first ?? now) + 60_000 - now) / 1000)
       const active = db.prepare("SELECT COUNT(*) AS n FROM generation_calls WHERE outcome='running'").get() as { n: number }
-      if (active.n >= this.limits.concurrent) throw new GenerationLimitError('当前生成任务已满，请等待正在进行的音乐或音效完成后再试。', 'generation_busy', 10)
+      if (active.n >= this.limits.concurrent) throw new GenerationLimitError('当前生成任务已满，请等待正在进行的音效完成后再试。', 'generation_busy', 10)
       const id = crypto.randomUUID()
       db.prepare("INSERT INTO generation_calls(id,account_id,provider,started_at,expires_at,outcome) VALUES (?,?,?,?,?,'running')").run(id, accountId, provider, now, now + leaseMs)
       db.exec('COMMIT')

@@ -8,11 +8,11 @@
 
 - Base URL、API Key、Model
 - Responses API 或 Chat Completions 协议
-- 音乐生成方式：“结构化工程（推荐）”或“直接 AI 音频增强”
+- 音乐固定生成为可编辑的 MIDI / 和弦工程，并由浏览器本地渲染
 
-Replicate 音乐和 ElevenLabs 音效是登录后可用的平台增强服务。它们的密钥只由管理员在“我的 → 账户”配置，普通用户无需也不能在浏览器填写。
+ElevenLabs 音效是登录后可用的可选平台增强服务。密钥只由管理员在“我的 → 账户”配置，普通用户无需也不能在浏览器填写。
 
-个人 Agent 配置保存在当前浏览器的 localStorage；只有勾选“记住 API Key”才会持久化个人 Key。平台音乐/音效密钥不会写入 localStorage 或项目文件。
+个人 Agent 配置保存在当前浏览器的 localStorage；只有勾选“记住 API Key”才会持久化个人 Key。平台音效密钥不会写入 localStorage 或项目文件。
 
 也可以使用服务端环境变量作为默认配置。复制 `.env.example` 为 `.env`：
 
@@ -21,7 +21,6 @@ OPENAI_API_KEY=你的_api_key
 OPENAI_BASE_URL=https://api.openai.com/v1
 OPENAI_MODEL=gpt-4.1-mini
 OPENAI_PROTOCOL=responses
-MUSIC_REPLICATE_MODEL=meta/musicgen
 PORT=8787
 # 服务端行为
 CORS_ORIGIN=
@@ -72,7 +71,6 @@ npm run dev
 - `POST /api/project/edit`：工程编辑 Agent，返回可撤销方向的结构化工程操作。
 - `POST /api/sfx/plan`：音效设计 Agent，把描述和调音台参数转为音效生成计划。
 - `POST /api/music/plan`：由 Agent 生成可编辑的 MIDI / 和弦 Project JSON，这是默认的音乐生成路径。
-- `POST /api/music/generate`：按设置页中的音乐服务配置调用音频模型生成真实音频，并保存到 `server/generated`。
 - `POST /api/sfx/generate`：调用 ElevenLabs Sound Generation 生成真实音效，并保存到 `server/generated`。
 - `POST /api/export/midi`：把当前 Project 的 MIDI 轨道导出为 `.mid` 文件。
 
@@ -138,22 +136,21 @@ npm run dev
 
 - MIDI：服务端生成标准 MIDI 文件。
 - WAV：浏览器端 OfflineAudioContext 渲染当前 MIDI 轨道并下载。
-- MP3：浏览器端使用 `lamejs` 将当前 MIDI 渲染结果编码下载；真实 AI 音频会以原始服务文件格式试听。
+- MP3：浏览器端使用 `lamejs` 将当前工程的本地渲染结果编码下载。
 
 ## 音频服务分工
 
 - OpenAI 只负责概念解释、故事映射、工程编辑、结构化音乐计划和音效计划等 Agent 工作，并通过 JSON Schema + Zod 校验。
 - 默认音乐路径是 Agent → Project JSON → 浏览器本地 WebAudio / MIDI 渲染，保留音符、和弦与轨道编辑能力。
-- Replicate 负责真实音乐音频生成，默认模型为 `meta/musicgen`。它生成的是音频，不是 MIDI。
 - ElevenLabs Sound Generation 负责真实音效生成。调音台参数会被翻译进文本提示中。
-- 用户点击的音符仍保存在工程的 MIDI 事件骨架里，因此可以继续编辑、导出 MIDI，并与 AI 音频同时保留。不要把 AI 音频默认反向识别为 MIDI，否则复调、鼓组和起止时间都会产生不可避免的误差。
+- 用户录制和 Agent 生成的音符都保存在工程的 MIDI 事件骨架里，可以继续编辑、本地渲染并导出 MIDI、WAV 或 MP3。
 
-生成文件保存在 `server/generated`，云端工程存入独立的 `server/projects` SQLite 库，固定双账号及会话存入非公开的 `server/auth` SQLite 库。“我的 → 账户”已接入 `/api/auth/login`、`/api/auth/me`、`/api/auth/logout`。管理员通过 `GET /api/admin/service-config` 查询状态，`PUT /api/admin/service-config` 保存 `{ replicate?: string | null, elevenlabs?: string | null }`。省略字段保留配置，`null` 清除配置，空字符串不合法。接口仅允许管理员；写操作需同源 JSON 和 `X-Sonic-Auth: 1`，生产需 HTTPS。
+生成文件保存在 `server/generated`，云端工程存入独立的 `server/projects` SQLite 库，固定双账号及会话存入非公开的 `server/auth` SQLite 库。“我的 → 账户”已接入 `/api/auth/login`、`/api/auth/me`、`/api/auth/logout`。管理员通过 `GET /api/admin/service-config` 查询状态，`PUT /api/admin/service-config` 保存 `{ elevenlabs?: string | null }`。省略字段保留配置，`null` 清除配置，空字符串不合法。接口仅允许管理员；写操作需同源 JSON 和 `X-Sonic-Auth: 1`，生产需 HTTPS。打开旧版配置库时会自动删除已废弃的 Replicate 密钥记录。
 
 密钥以 AES-256-GCM 加密存入 `AUTH_DIR/service-config.db`，随机 IV 和供应商绑定的 AAD 防止密文篡改与串用。接口不会回显明文、密文或末尾字符；前端不会保存平台密钥到 localStorage。`SONIC_CONFIG_KEY` 必须是 32 随机字节的 hex 或标准 base64，缺失时拒绝保存，错误参数无法覆盖已有配置。更新不会生成新的保护密钥。备份必须同时保留数据库和 `.env` 中的保护密钥。
 
-`POST /api/music/generate` 与 `POST /api/sfx/generate` 只允许已登录的管理员或使用者账号调用，并从上述加密配置读取平台密钥。客户端提交的音乐/音效密钥、供应商地址或模型会被拒绝；服务器固定调用官方 HTTPS 地址和受控模型。保存配置本身不会调用供应商或扣费，清除某项密钥后，对应生成接口立即停止工作。个人 OpenAI Agent 配置仍由用户在当前浏览器管理。生产配置、Cookie 安全设置和登录限流见 [`deploy/README.md`](../deploy/README.md)。
+`POST /api/sfx/generate` 只允许已登录的管理员或使用者账号调用，并从上述加密配置读取 ElevenLabs 密钥。客户端提交的音效密钥、供应商地址或模型会被拒绝；服务器固定调用官方 HTTPS 地址。保存配置本身不会调用供应商或扣费，清除密钥后生成接口立即停止工作。个人 OpenAI Agent 配置仍由用户在当前浏览器管理。生产配置、Cookie 安全设置和登录限流见 [`deploy/README.md`](../deploy/README.md)。
 
-付费生成使用服务器共享的 SQLite 保护额度：默认音乐每天 20 次、音效每天 50 次，全站每分钟 3 次、同时最多 2 个任务；日额度按北京时间零点重置。请求在调用供应商前原子占位，失败或取消也计入额度，以避免供应商已收费时重试绕过限制。平台请求不自动重试。只记录账号 ID、服务、时间、结果与错误码，不保存提示词或密钥；记录保留 90 天。管理员可在服务器运行 `npm run usage --prefix server` 查看当天汇总，不提供公开用量接口。
+付费音效生成使用服务器共享的 SQLite 保护额度：默认每天 50 次，全站每分钟 3 次、同时最多 2 个任务；日额度按北京时间零点重置。请求在调用供应商前原子占位，失败或取消也计入额度，以避免供应商已收费时重试绕过限制。平台请求不自动重试。只记录账号 ID、服务、时间、结果与错误码，不保存提示词或密钥；记录保留 90 天。管理员可在服务器运行 `npm run usage --prefix server` 查看当天汇总，不提供公开用量接口。
 
 没有配置 API Key 时，概念、音效计划和音乐工程计划接口会返回本地 fallback，方便继续演示；工程编辑会明确提示需要真实 Agent。

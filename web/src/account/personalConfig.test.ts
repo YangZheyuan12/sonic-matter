@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { defaultApiConfig, loadPersonalConfig, normalizePersonalConfig } from './personalConfig.ts'
 
-test('旧版个人配置只迁移 OpenAI Agent 字段并移除平台音乐与音效凭据', () => {
+test('旧版个人配置只迁移 OpenAI Agent 字段并移除历史生成服务凭据', () => {
   const clean = normalizePersonalConfig({
     baseUrl: 'https://agent.example/v1', apiKey: 'personal-agent-key', model: 'agent-model',
     protocol: 'chat-completions', musicMode: 'audio', rememberKey: true,
@@ -11,7 +11,7 @@ test('旧版个人配置只迁移 OpenAI Agent 字段并移除平台音乐与音
   })
   assert.deepEqual(clean, {
     baseUrl: 'https://agent.example/v1', apiKey: 'personal-agent-key', model: 'agent-model',
-    protocol: 'chat-completions', musicMode: 'audio', rememberKey: true,
+    protocol: 'chat-completions', rememberKey: true,
   })
   assert.equal(JSON.stringify(clean).includes('legacy-music-key'), false)
   assert.equal(JSON.stringify(clean).includes('legacy-sfx-key'), false)

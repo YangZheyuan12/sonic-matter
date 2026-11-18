@@ -160,11 +160,6 @@ const SENTINELS: Record<string, { code: ErrorCode; status: number; message: stri
     status: 503,
     message: '未配置 Agent API Key，无法执行真实 Agent 请求。',
   },
-  REPLICATE_API_TOKEN_MISSING: {
-    code: 'provider_not_configured',
-    status: 503,
-    message: '未配置 REPLICATE_API_TOKEN，无法生成真实音乐。',
-  },
   ELEVENLABS_API_KEY_MISSING: {
     code: 'provider_not_configured',
     status: 503,
@@ -176,12 +171,6 @@ const SENTINELS: Record<string, { code: ErrorCode; status: number; message: stri
     message: 'Agent 返回了空内容，请重试或更换模型。',
     retryable: true,
   },
-  REPLICATE_EMPTY_OUTPUT: {
-    code: 'provider_bad_response',
-    status: 502,
-    message: '音乐生成服务没有返回音频地址。',
-    retryable: true,
-  },
   PROVIDER_TIMEOUT: {
     code: 'provider_timeout',
     status: 504,
@@ -191,12 +180,9 @@ const SENTINELS: Record<string, { code: ErrorCode; status: number; message: stri
 }
 
 /** `PREFIX_503` 这类哨兵错误 → 上游状态码 → AppError。 */
-const STATUS_SENTINEL = /^(AUDIO_DOWNLOAD|REPLICATE_POLL|REPLICATE_CREATE|ELEVENLABS_GENERATE)_(\d{3})$/
+const STATUS_SENTINEL = /^(ELEVENLABS_GENERATE)_(\d{3})$/
 
 const LABELS: Record<string, string> = {
-  AUDIO_DOWNLOAD: '音频下载',
-  REPLICATE_POLL: '音乐生成任务轮询',
-  REPLICATE_CREATE: '音乐生成任务创建',
   ELEVENLABS_GENERATE: '音效生成',
 }
 
@@ -237,15 +223,6 @@ export function toAppError(error: unknown): AppError {
   if (raw.startsWith('OPENAI_INCOMPLETE_')) {
     return new AppError('Agent 的输出被截断（模型没有生成完整 JSON），可以换个模型或直接重试。', {
       code: 'provider_bad_response',
-      status: 502,
-      retryable: true,
-      detail: raw,
-      cause: error,
-    })
-  }
-  if (raw.startsWith('REPLICATE_')) {
-    return new AppError('音乐生成没有成功完成，请稍后重试。', {
-      code: 'provider_unavailable',
       status: 502,
       retryable: true,
       detail: raw,

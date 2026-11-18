@@ -2,14 +2,14 @@ import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { errorMessage, isApiError } from '../api/client'
 import { buildConfigPatch, loadServiceConfig, saveServiceConfig, type ConfigDraft, type Provider, type ServiceConfigStatus } from './api'
 
-const blank = (): ConfigDraft => ({ replicate: '', elevenlabs: '' })
+const blank = (): ConfigDraft => ({ elevenlabs: '' })
 
 export default function AdminServiceConfig({ onNotice, onSessionExpired }: {
   onNotice: (message: string) => void; onSessionExpired: () => void
 }) {
   const [status, setStatus] = useState<ServiceConfigStatus | null>(null)
   const [draft, setDraft] = useState(blank)
-  const [clear, setClear] = useState({ replicate: false, elevenlabs: false })
+  const [clear, setClear] = useState({ elevenlabs: false })
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [reload, setReload] = useState(0)
@@ -42,7 +42,7 @@ export default function AdminServiceConfig({ onNotice, onSessionExpired }: {
     setDraft(blank())
     try {
       const saved = await saveServiceConfig(patch)
-      if (alive.current) { setStatus(saved); setClear({ replicate: false, elevenlabs: false }); onNotice('平台密钥已加密保存到服务器。') }
+      if (alive.current) { setStatus(saved); setClear({ elevenlabs: false }); onNotice('音效服务密钥已加密保存到服务器。') }
     } catch (reason) {
       if (alive.current) {
         setError(errorMessage(reason))
@@ -52,12 +52,11 @@ export default function AdminServiceConfig({ onNotice, onSessionExpired }: {
   }
 
   const services: [Provider, string, string][] = [
-    ['replicate', '音乐服务 · Replicate', 'REPLICATE_API_TOKEN'],
     ['elevenlabs', '音效服务 · ElevenLabs', 'ELEVENLABS_API_KEY'],
   ]
   return <form className="admin-service-config" onSubmit={event => void submit(event)}>
     <div className="paneltitle"><span>平台服务配置</span><span>仅管理员</span></div>
-    <p>密钥只保存到服务器，不会回显或写入浏览器本地存储。个人 OpenAI 配置仍在 Agent 中管理。</p>
+    <p>ElevenLabs 只是可选的真实音效增强。密钥只保存到服务器，不会回显或写入浏览器本地存储。</p>
     {!status && !error && <p role="status">正在读取配置状态…</p>}
     {status && !status.encryptionReady && <p role="alert">服务器密钥保护参数尚未就绪，暂时无法保存，请检查服务器配置。</p>}
     <div className="settings-grid service-settings-grid">
@@ -73,6 +72,6 @@ export default function AdminServiceConfig({ onNotice, onSessionExpired }: {
     </div>
     {error && <p role="alert">{error}</p>}
     <div className="settings-actions"><button className="primary" type="submit" disabled={busy || loading || !status?.encryptionReady}>{busy ? '保存中…' : '保存平台配置'}</button><button className="secondary" type="button" disabled={busy || loading} onClick={() => { setLoading(true); setReload(value => value + 1) }}>刷新状态</button></div>
-    <p className="security-note">保存后，已登录账号可使用对应平台生成服务；保存本身不会发起生成或扣费。清除密钥后将停止新的生成请求。</p>
+    <p className="security-note">保存后，已登录账号可生成真实音效；保存本身不会发起生成或扣费。未配置时，本地试听和声音计划仍然可用。</p>
   </form>
 }

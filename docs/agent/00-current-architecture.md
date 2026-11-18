@@ -26,7 +26,6 @@ flowchart LR
     U[用户] --> W[React Web]
     W -->|/api/*| S[Express Server]
     S --> L[OpenAI-compatible LLM]
-    S --> R[Replicate]
     S --> E[ElevenLabs]
     S --> P[(Project SQLite)]
     S --> A[(Auth / Config / Usage SQLite)]
@@ -48,7 +47,7 @@ flowchart LR
 - 验证 HTTP 输入。
 - 解析 Agent 配置并调用模型。
 - 使用 JSON Schema 和 Zod 验证模型输出。
-- 调用平台音乐和音效服务。
+- 调用可选的平台真实音效服务。
 - 管理工程、账户、平台密钥和生成额度。
 - 返回统一错误信封并记录脱敏日志。
 
@@ -327,7 +326,7 @@ flowchart TD
 - 向量数据库和长期记忆。
 - 允许模型执行任意代码、Shell、文件或网络请求。
 - 服务重启后恢复正在执行的 Run。
-- 使用真实付费音乐/音效生成作为自动 Eval 的必要条件。
+- 使用真实付费音效生成作为自动 Eval 的必要条件。
 - 自动评判主观音乐审美。
 - 移动端整体重构和商业级多租户账户系统。
 

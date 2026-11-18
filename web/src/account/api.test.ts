@@ -27,24 +27,23 @@ test('退出和保存均带 JSON 与保护头；退出发送空对象而非空�
   const calls: { url: string; init: RequestInit }[] = []
   stub(t, (url, init) => { calls.push({ url, init }); return json({ ok: true }) })
   await logoutAccount()
-  await saveServiceConfig({ replicate: 'synthetic-test-key', elevenlabs: null })
+  await saveServiceConfig({ elevenlabs: null })
   assert.equal(calls[0].url, '/api/auth/logout')
   assert.equal(calls[0].init.body, '{}')
   assert.equal(calls[1].url, '/api/admin/service-config')
   assert.equal(calls[1].init.method, 'PUT')
-  assert.deepEqual(JSON.parse(String(calls[1].init.body)), { replicate: 'synthetic-test-key', elevenlabs: null })
+  assert.deepEqual(JSON.parse(String(calls[1].init.body)), { elevenlabs: null })
   for (const call of calls) {
     assert.equal(new Headers(call.init.headers).get('content-type'), 'application/json')
     assert.equal(new Headers(call.init.headers).get('x-sonic-auth'), '1')
   }
 })
 
-test('平台音乐与音效生成统一发送登录保护头且不附带浏览器平台配置', async t => {
+test('平台音效生成发送登录保护头且不附带浏览器平台配置', async t => {
   const calls: { url: string; init: RequestInit }[] = []
   stub(t, (url, init) => { calls.push({ url, init }); return json({ url: '/generated/test.wav' }) })
-  await runPlatformGeneration('/api/music/generate', { prompt: '潮汐', duration_seconds: 10 })
   await runPlatformGeneration('/api/sfx/generate', { description: '水滴', mixer: { length: 2 } })
-  assert.deepEqual(calls.map(call => call.url), ['/api/music/generate', '/api/sfx/generate'])
+  assert.deepEqual(calls.map(call => call.url), ['/api/sfx/generate'])
   for (const call of calls) {
     assert.equal(call.init.method, 'POST')
     assert.equal(new Headers(call.init.headers).get('x-sonic-auth'), '1')
@@ -55,17 +54,17 @@ test('平台音乐与音效生成统一发送登录保护头且不附带浏览�
   }
 })
 
-test('空白保留已有配置，清除优先于输入，单项更新不触碰另一项', () => {
-  assert.deepEqual(buildConfigPatch({ replicate: ' ', elevenlabs: '' }, { replicate: false, elevenlabs: false }), {})
-  assert.deepEqual(buildConfigPatch({ replicate: ' new-key ', elevenlabs: '' }, { replicate: false, elevenlabs: false }), { replicate: 'new-key' })
-  assert.deepEqual(buildConfigPatch({ replicate: 'new-key', elevenlabs: ' other-key ' }, { replicate: true, elevenlabs: false }), { replicate: null, elevenlabs: 'other-key' })
+test('空白保留已有音效配置，显式清除优先于输入', () => {
+  assert.deepEqual(buildConfigPatch({ elevenlabs: '' }, { elevenlabs: false }), {})
+  assert.deepEqual(buildConfigPatch({ elevenlabs: ' other-key ' }, { elevenlabs: false }), { elevenlabs: 'other-key' })
+  assert.deepEqual(buildConfigPatch({ elevenlabs: 'new-key' }, { elevenlabs: true }), { elevenlabs: null })
 })
 
 test('生成额度、频率和并发限制的中文原因原样传给界面，禁止自动重试', async t => {
   let code = 'quota_exceeded'
   stub(t, () => json({ error: '生成额度已用完，请在北京时间明日零点后再试。', code, retryable: false }, 429))
   for (code of ['quota_exceeded', 'generation_rate_limited', 'generation_busy']) {
-    await assert.rejects(runPlatformGeneration('/api/music/generate', { prompt: '潮汐' }), (error: unknown) => {
+    await assert.rejects(runPlatformGeneration('/api/sfx/generate', { description: '潮汐' }), (error: unknown) => {
       assert.ok(error instanceof ApiError)
       assert.equal(error.status, 429); assert.equal(error.code, code); assert.equal(error.retryable, false)
       assert.match(error.message, /北京时间明日零点/)

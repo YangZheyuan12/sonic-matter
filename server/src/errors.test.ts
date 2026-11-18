@@ -13,7 +13,7 @@ test('AppError 工厂保留 code / status / detail', () => {
 })
 
 test('toAppError 把上游状态码翻成可重试/不可重试', () => {
-  const rateLimited = toAppError(new Error('REPLICATE_CREATE_429'))
+  const rateLimited = toAppError(new Error('ELEVENLABS_GENERATE_429'))
   assert.equal(rateLimited.code, 'provider_rate_limited')
   assert.equal(rateLimited.status, 429)
   assert.equal(rateLimited.retryable, true)
@@ -23,7 +23,7 @@ test('toAppError 把上游状态码翻成可重试/不可重试', () => {
   assert.equal(unauthorized.status, 502)
   assert.match(unauthorized.message, /API Key/)
 
-  const unavailable = toAppError(new Error('AUDIO_DOWNLOAD_503'))
+  const unavailable = toAppError(new Error('ELEVENLABS_GENERATE_503'))
   assert.equal(unavailable.code, 'provider_unavailable')
   assert.equal(unavailable.retryable, true)
 })
@@ -36,9 +36,9 @@ test('toAppError 认识 OpenAI SDK 的 .status 与缺失 Key 哨兵', () => {
   assert.equal(missingKey.code, 'provider_not_configured')
   assert.equal(missingKey.status, 503)
 
-  const missingToken = toAppError(new Error('REPLICATE_API_TOKEN_MISSING'))
+  const missingToken = toAppError(new Error('ELEVENLABS_API_KEY_MISSING'))
   assert.equal(missingToken.code, 'provider_not_configured')
-  assert.equal(missingToken.detail, 'REPLICATE_API_TOKEN_MISSING')
+  assert.equal(missingToken.detail, 'ELEVENLABS_API_KEY_MISSING')
 })
 
 test('超时与空输出被标成可重试', () => {
@@ -116,4 +116,3 @@ test('来源不在 CORS_ORIGIN 名单里是 403 + cors_not_allowed', () => {
   assert.match(error.message, /CORS_ORIGIN/)
   assert.equal(toAppError(error), error, '已经是 AppError 就原样透传')
 })
-

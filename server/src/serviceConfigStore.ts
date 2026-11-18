@@ -5,11 +5,10 @@ import { DatabaseSync } from 'node:sqlite'
 import { z } from 'zod'
 import { AppError } from './errors.ts'
 
-export const providerNames = ['replicate', 'elevenlabs'] as const
+export const providerNames = ['elevenlabs'] as const
 export type ProviderName = typeof providerNames[number]
 const keySchema = z.string().trim().min(8).max(500).regex(/^[\x21-\x7e]+$/)
 export const serviceConfigPatchSchema = z.object({
-  replicate: keySchema.nullable().optional(),
   elevenlabs: keySchema.nullable().optional(),
 }).strict().refine(patch => Object.keys(patch).length > 0)
 export type ServiceConfigPatch = z.infer<typeof serviceConfigPatchSchema>
@@ -42,9 +41,11 @@ export class ServiceConfigStore {
     if (process.platform !== 'win32') chmodSync(this.databasePath, 0o600)
     this.#db.exec(`PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 3000;
       CREATE TABLE IF NOT EXISTS service_config (
-        provider TEXT PRIMARY KEY CHECK(provider IN ('replicate', 'elevenlabs')),
+        provider TEXT PRIMARY KEY CHECK(provider IN ('elevenlabs')),
         ciphertext TEXT NOT NULL, iv TEXT NOT NULL, tag TEXT NOT NULL, updated_at TEXT NOT NULL
       )`)
+    // 旧版本曾保存 Replicate 音乐密钥；该能力移除后立即清理废弃凭据。
+    this.#db.prepare("DELETE FROM service_config WHERE provider = 'replicate'").run()
     return this.#db
   }
 

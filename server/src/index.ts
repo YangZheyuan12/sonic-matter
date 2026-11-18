@@ -22,7 +22,6 @@ import { GenerationStore } from './generationStore.ts'
 import { runGeneration } from './generation.ts'
 import { agentRunsRouter } from './agentRuns.ts'
 import { AgentRunStore } from './agent/runStore.ts'
-import { setTimeout as delay } from 'node:timers/promises'
 import {
   agentTimeoutMs,
   allowedOrigins,
@@ -49,7 +48,6 @@ const webDistDir = path.resolve(process.cwd(), process.env.WEB_DIST_DIR ?? '../w
 const serveWeb = process.env.SERVE_WEB === '1'
 /** 云端工程库（SQLite 文件）的目录。**必须放在 /generated 之外**——那个目录是公开静态托管的。 */
 const projectsDir = path.resolve(process.cwd(), process.env.PROJECTS_DIR ?? 'projects')
-const replicateModel = process.env.MUSIC_REPLICATE_MODEL ?? 'meta/musicgen'
 const authStore = new AuthStore(path.resolve(process.cwd(), process.env.AUTH_DIR ?? 'auth'))
 const auth = createAuth(authStore, { origin: process.env.AUTH_ORIGIN })
 const serviceConfig = new ServiceConfigStore(authStore.dir)
@@ -92,10 +90,6 @@ const editResponseSchema = z.object({ assistant_message: z.string().min(1).max(2
 const soundMixerSchema = z.object({ length: z.number().min(.1).max(30), density: z.number().min(0).max(100), brightness: z.number().min(0).max(100), space: z.number().min(0).max(100), compact: z.number().min(0).max(100) })
 const soundPlanSchema = z.object({ title: z.string().min(1).max(80), prompt: z.string().min(1).max(300), duration_seconds: z.number().min(.1).max(30), texture: z.string().min(1).max(80), envelope: z.string().min(1).max(80), space: z.string().min(1).max(80), events: z.array(z.object({ time: z.number().min(0).max(30), event: z.string().min(1).max(120) })).min(1).max(8) })
 const soundPlanInputSchema = z.object({ description: z.string().trim().min(1).max(500), mixer: soundMixerSchema }).merge(requestWithAgentSchema)
-const musicGenerateInputSchema = z.object({
-  prompt: z.string().trim().min(1).max(1000),
-  duration_seconds: z.number().min(1).max(30).default(10),
-}).strict()
 const soundGenerateInputSchema = z.object({
   description: z.string().trim().min(1).max(500),
   mixer: soundMixerSchema,
@@ -183,7 +177,7 @@ function fallbackMusicPlan(project: z.infer<typeof projectSchema>): z.infer<type
   return { title: `${project.title} · 结构化草案`, tempo: project.tempo, key: project.key, duration: Math.min(30, project.duration ?? 10), tracks }
 }
 function fallbackSound(description: string, mixer: z.infer<typeof soundMixerSchema>): z.infer<typeof soundPlanSchema> { return { title: 'Semantic Sound Sketch', prompt: `${description}; density ${mixer.density}%; brightness ${mixer.brightness}%; spaciousness ${mixer.space}%; compactness ${mixer.compact}%`, duration_seconds: mixer.length, texture: mixer.brightness > 60 ? 'bright granular transient' : 'dark granular transient', envelope: mixer.compact > 60 ? 'tight attack, short decay' : 'soft attack, long tail', space: mixer.space > 60 ? 'wide underwater reverb' : 'near-field dry room', events: [{ time: 0, event: 'distant onset' }, { time: Math.max(.1, mixer.length * .42), event: 'textural rupture' }, { time: Math.max(.2, mixer.length * .78), event: 'resonant tail' }] } }
-function platformSecret(provider: 'replicate' | 'elevenlabs', label: string) {
+function platformSecret(provider: 'elevenlabs', label: string) {
   const value = serviceConfig.readKey(provider)
   if (!value) throw providerNotConfigured(`管理员尚未配置${label}平台密钥，请联系管理员在“我的 → 账户”中完成配置。`)
   return value
@@ -193,42 +187,6 @@ function platformSecret(provider: 'replicate' | 'elevenlabs', label: string) {
 function platformFetch(url: string, init: RequestInit, signal?: AbortSignal) {
   const timeout = AbortSignal.timeout(providerTimeoutMs)
   return fetch(url, { ...init, redirect: 'error', signal: signal ? AbortSignal.any([signal, timeout]) : timeout })
-}
-
-/** 取音频二进制，不向下载地址发送任何平台凭据。 */
-async function downloadGeneratedAudio(url: string, extension: string, signal?: AbortSignal) {
-  const response = await platformFetch(url, {}, signal)
-  if (!response.ok) throw new Error(`AUDIO_DOWNLOAD_${response.status}`)
-  const buffer = Buffer.from(await response.arrayBuffer())
-  await mkdir(generatedDir, { recursive: true })
-  const filename = `${Date.now()}-${crypto.randomBytes(4).toString('hex')}.${extension}`
-  await writeFile(path.join(generatedDir, filename), buffer)
-  return { filename, url: `/generated/${filename}` }
-}
-
-async function generateWithReplicate(prompt: string, durationSeconds: number, token: string, signal?: AbortSignal) {
-  const model = replicateModel
-  const modelPath = model.includes('/') ? `/models/${model}/predictions` : '/predictions'
-  const baseUrl = 'https://api.replicate.com/v1'
-  const response = await platformFetch(`${baseUrl}${modelPath}`, {
-    method: 'POST', redirect: 'error',
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ...(model.includes('/') ? {} : { version: model }), input: { prompt, duration: durationSeconds } }),
-  }, signal)
-  if (!response.ok) throw new Error(`REPLICATE_CREATE_${response.status}`)
-  let prediction = await response.json() as { id: string; status: string; output?: string | string[]; error?: string }
-  const deadline = Date.now() + 180_000
-  while (['starting', 'processing'].includes(prediction.status) && Date.now() < deadline) {
-    await delay(2500, undefined, { signal })
-    if (!/^[a-zA-Z0-9_-]+$/.test(prediction.id)) throw new Error('REPLICATE_INVALID_ID')
-    const poll = await platformFetch(`${baseUrl}/predictions/${prediction.id}`, { headers: { Authorization: `Bearer ${token}` } }, signal)
-    if (!poll.ok) throw new Error(`REPLICATE_POLL_${poll.status}`)
-    prediction = await poll.json() as typeof prediction
-  }
-  if (prediction.status !== 'succeeded') throw new Error('REPLICATE_GENERATION_FAILED')
-  const output = Array.isArray(prediction.output) ? prediction.output[0] : prediction.output
-  if (!output) throw new Error('REPLICATE_EMPTY_OUTPUT')
-  return downloadGeneratedAudio(output, 'wav', signal)
 }
 
 async function generateWithElevenLabs(description: string, mixer: z.infer<typeof soundMixerSchema>, apiKey: string, signal?: AbortSignal) {
@@ -326,14 +284,6 @@ app.post('/api/music/plan', asyncHandler(async (req, res) => {
     if (isNotConfigured(error)) return res.json({ ...fallbackMusicPlan(project), source: 'fallback', warning: '未配置 Agent API Key，当前沿用现有 MIDI 结构作为可编辑草案。' })
     throw error
   }
-}))
-
-app.post('/api/music/generate', auth.requireAccount, auth.protectMutation, asyncHandler(async (req, res) => {
-  const parsed = musicGenerateInputSchema.safeParse(req.body)
-  if (!parsed.success) throw badRequest('音乐描述或时长不正确；平台服务配置由管理员统一管理，不接受客户端密钥、地址或模型。')
-  const token = platformSecret('replicate', '音乐')
-  const generated = await runGeneration(generationStore, req, res, 'replicate', signal => generateWithReplicate(parsed.data.prompt, parsed.data.duration_seconds, token, signal))
-  return res.json({ ...generated, provider: 'replicate', model: replicateModel, source: 'audio-model' })
 }))
 
 app.post('/api/sfx/generate', auth.requireAccount, auth.protectMutation, asyncHandler(async (req, res) => {

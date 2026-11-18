@@ -74,7 +74,7 @@ export default function AccountPanel({ onNotice }: { onNotice: (message: string)
         {checking ? <p role="status">正在确认登录状态…</p> : account ? <div className="account-state">
           <span className="avatar">{account.username.slice(0, 1).toUpperCase()}</span>
           <div><strong>{account.username} · {account.role === 'admin' ? '管理员' : '使用者'}</strong>
-            <p>{account.role === 'admin' ? '可以管理平台音乐与音效服务的密钥。' : '使用管理员分发的账号访问创作服务。'}</p>
+            <p>{account.role === 'admin' ? '可以管理可选 ElevenLabs 音效服务的密钥。' : '使用管理员分发的账号访问创作服务。'}</p>
             {session.expiresAt && <p>会话有效至 {new Date(session.expiresAt).toLocaleString('zh-CN')}</p>}
           </div>
           <button className="secondary" onClick={() => void mutate(true)} disabled={busy}>{busy ? '退出中…' : '退出登录'}</button>

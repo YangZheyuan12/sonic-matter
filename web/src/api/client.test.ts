@@ -139,7 +139,7 @@ test('超时会自动中止请求并给出 client_timeout', async () => {
   try {
     const started = Date.now()
     await assert.rejects(
-      () => apiFetch('/api/music/generate', {}, { timeoutMs: 30 }),
+      () => apiFetch('/api/sfx/generate', {}, { timeoutMs: 30 }),
       (error: unknown) => {
         assert.ok(error instanceof ApiError)
         assert.equal(error.code, 'client_timeout')
@@ -162,7 +162,7 @@ test('用户取消时标记为 client_canceled，可供 UI 忽略', async () => 
   )
   try {
     const controller = new AbortController()
-    const pending = apiFetch('/api/music/generate', {}, { signal: controller.signal })
+    const pending = apiFetch('/api/sfx/generate', {}, { signal: controller.signal })
     setTimeout(() => controller.abort(), 10)
     await assert.rejects(pending, (error: unknown) => {
       assert.ok(error instanceof ApiError)

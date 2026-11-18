@@ -26,3 +26,10 @@ test('新工作流仍保留账户、管理员密钥、云端工程与导出入�
   assert.match(workflow, /游戏简报/)
   assert.match(workflow, /声音方向/)
 })
+
+test('音乐固定生成可编辑工程，真实音效作为唯一可选平台增强', () => {
+  assert.match(app, /生成可编辑工程/)
+  assert.match(app, /ElevenLabs · 平台音效服务/)
+  assert.doesNotMatch(app, /AI 生成音频/)
+  assert.doesNotMatch(app, /Replicate/)
+})
